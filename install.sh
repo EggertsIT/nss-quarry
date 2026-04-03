@@ -263,16 +263,71 @@ hash_password_cli() {
   "$bin_path" hash-password --password "$plain" | tail -n1
 }
 
-append_demo_user_if_missing() {
+remove_local_user_blocks_by_username() {
+  local cfg="$1"
+  local username="$2"
+  local tmp
+  tmp="$(mktemp "${cfg}.tmp.XXXXXX")"
+
+  awk -v target_user="$username" '
+BEGIN {
+  in_block = 0
+  skip_block = 0
+  n = 0
+}
+
+function flush_block() {
+  if (!in_block) return
+  if (!skip_block) {
+    for (i = 1; i <= n; i++) {
+      print block[i]
+    }
+  }
+  in_block = 0
+  skip_block = 0
+  n = 0
+}
+
+/^\[\[auth\.local_users\.users\]\][[:space:]]*$/ {
+  flush_block()
+  in_block = 1
+  block[++n] = $0
+  next
+}
+
+{
+  if (in_block) {
+    block[++n] = $0
+    if ($0 ~ /^[[:space:]]*username[[:space:]]*=/) {
+      line = $0
+      sub(/^[^"]*"/, "", line)
+      sub(/".*$/, "", line)
+      if (line == target_user) {
+        skip_block = 1
+      }
+    }
+    next
+  }
+  print
+}
+
+END {
+  flush_block()
+}
+' "$cfg" >"$tmp"
+
+  chmod --reference="$cfg" "$tmp"
+  chown --reference="$cfg" "$tmp"
+  mv "$tmp" "$cfg"
+}
+
+upsert_local_user() {
   local cfg="$1"
   local username="$2"
   local hash="$3"
   local role="$4"
 
-  if grep -Eq "^[[:space:]]*username[[:space:]]*=[[:space:]]*\"${username}\"[[:space:]]*$" "$cfg"; then
-    log "Demo user '$username' already present in config; skipping"
-    return 0
-  fi
+  remove_local_user_blocks_by_username "$cfg" "$username"
 
   cat >>"$cfg" <<EOF
 
@@ -282,7 +337,7 @@ password_hash = "$hash"
 role = "$role"
 disabled = false
 EOF
-  log "Added demo user '$username' with role '$role'"
+  log "Configured local user '$username' with role '$role'"
 }
 
 confirm_default_no() {
@@ -606,9 +661,9 @@ if [[ "$DEMO_USERS" -eq 1 ]]; then
   analyst_hash="$(hash_password_cli "$BIN_PATH" "analyst")"
   helpdesk_hash="$(hash_password_cli "$BIN_PATH" "helpdesk")"
 
-  append_demo_user_if_missing "$CONFIG_PATH" "admin" "$admin_hash" "admin"
-  append_demo_user_if_missing "$CONFIG_PATH" "analyst" "$analyst_hash" "analyst"
-  append_demo_user_if_missing "$CONFIG_PATH" "helpdesk" "$helpdesk_hash" "helpdesk"
+  upsert_local_user "$CONFIG_PATH" "admin" "$admin_hash" "admin"
+  upsert_local_user "$CONFIG_PATH" "analyst" "$analyst_hash" "analyst"
+  upsert_local_user "$CONFIG_PATH" "helpdesk" "$helpdesk_hash" "helpdesk"
 
   log "Demo credentials:"
   log "  admin / admin (role=admin)"
