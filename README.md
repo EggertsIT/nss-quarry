@@ -42,10 +42,22 @@ Run:
 sudo ./install.sh
 ```
 
+One-line install:
+
+```bash
+git clone https://github.com/EggertsIT/nss-quarry.git && cd nss-quarry && sudo ./install.sh
+```
+
 Demo/lab shortcut:
 
 ```bash
 sudo ./install.sh --demo-users
+```
+
+One-line demo install:
+
+```bash
+git clone https://github.com/EggertsIT/nss-quarry.git && cd nss-quarry && sudo ./install.sh --demo-users
 ```
 
 This creates local test users:
