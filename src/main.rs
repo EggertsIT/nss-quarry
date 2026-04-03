@@ -294,9 +294,7 @@ async fn api_search(
             action: "query.search".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
-                "time_from": req.time_from,
-                "time_to": req.time_to,
-                "limit": req.limit,
+                "query": req,
                 "rows": result.row_count
             }),
         })
@@ -324,9 +322,7 @@ async fn api_export_csv(
             action: "query.export_csv".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
-                "time_from": req.time_from,
-                "time_to": req.time_to,
-                "limit": req.limit,
+                "query": req,
                 "bytes": csv.len()
             }),
         })

@@ -21,7 +21,7 @@ pub struct AuthResponse {
     pub user: AuthUser,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SearchRequest {
     pub time_from: DateTime<Utc>,
     pub time_to: DateTime<Utc>,
@@ -31,7 +31,7 @@ pub struct SearchRequest {
     pub columns: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct SearchFilters {
     pub user: Option<String>,
     pub url: Option<String>,
