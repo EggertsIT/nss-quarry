@@ -45,7 +45,7 @@ sudo ./install.sh
 One-line install:
 
 ```bash
-git clone https://github.com/EggertsIT/nss-quarry.git && cd nss-quarry && sudo ./install.sh
+git clone https://github.com/EggertsIT/nss-quarry.git && cd nss-quarry && sudo ./install.sh --install-deps --install-rust
 ```
 
 Demo/lab shortcut:
@@ -57,7 +57,7 @@ sudo ./install.sh --demo-users
 One-line demo install:
 
 ```bash
-git clone https://github.com/EggertsIT/nss-quarry.git && cd nss-quarry && sudo ./install.sh --demo-users
+git clone https://github.com/EggertsIT/nss-quarry.git && cd nss-quarry && sudo ./install.sh --install-deps --install-rust --demo-users
 ```
 
 This creates local test users:

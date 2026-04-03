@@ -30,10 +30,16 @@ Run install as root:
 sudo ./install.sh
 ```
 
+If dependencies are missing on Rocky/RHEL:
+
+```bash
+sudo ./install.sh --install-deps --install-rust
+```
+
 Demo/lab mode:
 
 ```bash
-sudo ./install.sh --demo-users
+sudo ./install.sh --install-deps --install-rust --demo-users
 ```
 
 Demo mode behavior:

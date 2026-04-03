@@ -2,6 +2,8 @@
 set -euo pipefail
 
 DEMO_USERS=0
+INSTALL_DEPS=0
+INSTALL_RUST=0
 
 usage() {
   cat <<'EOF'
@@ -14,6 +16,10 @@ Options:
         - analyst (role: analyst, password: analyst)
         - helpdesk (role: helpdesk, password: helpdesk)
       Intended only for lab/testing/demo.
+  --install-deps
+      Auto-install OS dependencies on RHEL/Rocky via dnf (nginx, openssl, acl, build tools).
+  --install-rust
+      If cargo is missing and a build is required, install Rust toolchain via rustup.
   -h, --help
       Show this help text.
 EOF
@@ -34,6 +40,14 @@ while [[ $# -gt 0 ]]; do
       DEMO_USERS=1
       shift
       ;;
+    --install-deps)
+      INSTALL_DEPS=1
+      shift
+      ;;
+    --install-rust)
+      INSTALL_RUST=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -43,6 +57,38 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+install_os_dependencies() {
+  require_cmd dnf
+  log "Installing OS dependencies via dnf"
+  dnf install -y \
+    nginx \
+    openssl \
+    acl \
+    curl \
+    ca-certificates \
+    gcc \
+    gcc-c++ \
+    make \
+    pkgconf-pkg-config
+}
+
+install_rust_toolchain() {
+  if command -v cargo >/dev/null 2>&1; then
+    return 0
+  fi
+  require_cmd curl
+  log "Installing Rust toolchain via rustup (stable, minimal profile)"
+  local tmp_installer="/tmp/rustup-init.sh"
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$tmp_installer"
+  sh "$tmp_installer" -y --profile minimal --default-toolchain stable
+  rm -f "$tmp_installer"
+  if [[ -f "/root/.cargo/env" ]]; then
+    # shellcheck disable=SC1091
+    source /root/.cargo/env
+  fi
+  command -v cargo >/dev/null 2>&1 || fail "cargo still missing after rustup install"
+}
 
 require_cmd() {
   local cmd="$1"
@@ -162,6 +208,10 @@ if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   fail "run install.sh as root (it installs system files). The service itself runs as an unprivileged user."
 fi
 
+if [[ "$INSTALL_DEPS" -eq 1 ]]; then
+  install_os_dependencies
+fi
+
 require_cmd id
 require_cmd useradd
 require_cmd install
@@ -235,6 +285,13 @@ install -d -m 0750 -o root -g "$APP_GROUP" "$ETC_DIR"
 install -d -m 0750 -o root -g "$APP_GROUP" "$CERT_DIR"
 
 if [[ ! -x "$SCRIPT_DIR/target/release/nss-quarry" ]]; then
+  if ! command -v cargo >/dev/null 2>&1; then
+    if [[ "$INSTALL_RUST" -eq 1 ]]; then
+      install_rust_toolchain
+    else
+      fail "cargo is missing and no prebuilt binary found. Re-run with --install-rust or build manually before install."
+    fi
+  fi
   log "Building release binary"
   (cd "$SCRIPT_DIR" && cargo build --release)
 fi
