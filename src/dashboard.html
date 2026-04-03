@@ -141,6 +141,13 @@
     }
     .muted { color: var(--muted); }
     .hidden { display: none !important; }
+    #ingestor-frame {
+      width: 100%;
+      min-height: 960px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.96);
+    }
     #auth-panel { max-width: 540px; margin: 24px auto 0; }
     .auth-mode {
       font-size: 0.82rem;
@@ -205,6 +212,7 @@
       <div class="panel" style="margin-bottom: 14px;">
         <div class="menu">
           <button id="menu-main" class="ghost active" type="button">Main</button>
+          <button id="menu-ingestor" class="ghost" type="button">NSS Ingestor</button>
           <button id="menu-audit" class="ghost hidden" type="button">Audit</button>
         </div>
       </div>
@@ -276,6 +284,17 @@
       </div>
       </div>
 
+      <div class="panel hidden" id="view-ingestor" style="margin-top: 14px;">
+        <h3>NSS Ingestor Dashboard</h3>
+        <div class="toolbar" style="margin-bottom: 8px;">
+          <button id="ingestor-refresh" type="button" class="ghost">Refresh Ingestor</button>
+          <button id="ingestor-open" type="button" class="ghost">Open in New Tab</button>
+          <div id="ingestor-meta" class="muted"></div>
+        </div>
+        <div id="ingestor-msg" class="message"></div>
+        <iframe id="ingestor-frame" title="NSS Ingestor Dashboard" loading="lazy"></iframe>
+      </div>
+
       <div class="panel hidden" id="view-audit" style="margin-top: 14px;">
         <h3>Recent Audit Events (Admin)</h3>
         <form id="audit-filter-form" class="form-grid" style="margin-bottom: 8px;">
@@ -316,6 +335,7 @@
     let latestSearchRequest = null;
     let latestSchema = null;
     let activeView = "main";
+    let ingestorLoaded = false;
     let auditPage = 1;
     let auditTotalPages = 0;
     const auditPageSize = 50;
@@ -404,21 +424,55 @@
       $("app-panel").classList.toggle("hidden", !authenticated);
     }
 
+    function isAdminUser() {
+      return Boolean(currentUser && currentUser.role === "admin");
+    }
+
     function setView(view) {
+      if (view === "audit" && !isAdminUser()) {
+        view = "main";
+      }
+      if (view !== "main" && view !== "ingestor" && view !== "audit") {
+        view = "main";
+      }
       activeView = view;
-      const isAudit = view === "audit";
-      $("view-main").classList.toggle("hidden", isAudit);
+      const isAudit = view === "audit" && isAdminUser();
+      const isIngestor = view === "ingestor";
+      $("view-main").classList.toggle("hidden", isAudit || isIngestor);
+      $("view-ingestor").classList.toggle("hidden", !isIngestor);
       $("view-audit").classList.toggle("hidden", !isAudit);
-      $("menu-main").classList.toggle("active", !isAudit);
+      $("menu-main").classList.toggle("active", view === "main");
+      $("menu-ingestor").classList.toggle("active", isIngestor);
       $("menu-audit").classList.toggle("active", isAudit);
     }
 
     function syncMenuAccess() {
-      const isAdmin = currentUser && currentUser.role === "admin";
+      const isAdmin = isAdminUser();
       $("menu-audit").classList.toggle("hidden", !isAdmin);
-      if (!isAdmin && activeView === "audit") {
-        setView("main");
+      setView(activeView);
+    }
+
+    async function loadIngestorMeta() {
+      try {
+        const data = await apiFetch("/ingestor/api/stats", { method: "GET" });
+        const status = data.status || "unknown";
+        const ingested = Number(data?.totals?.ingested || 0).toLocaleString();
+        const written = Number(data?.totals?.written_rows || 0).toLocaleString();
+        const rate = Number(data?.rates_per_sec?.ingest_1m || 0).toFixed(2);
+        $("ingestor-meta").textContent = `Status: ${status} | Ingested: ${ingested} | Written: ${written} | Ingest 1m: ${rate}/s`;
+        setMessage("ingestor-msg", "", true);
+      } catch (err) {
+        $("ingestor-meta").textContent = "";
+        setMessage("ingestor-msg", err.message || "Failed to load ingestor status.");
       }
+    }
+
+    async function loadIngestorDashboard(forceReload = false) {
+      if (!ingestorLoaded || forceReload) {
+        $("ingestor-frame").src = `/ingestor/dashboard?t=${Date.now()}`;
+        ingestorLoaded = true;
+      }
+      await loadIngestorMeta();
     }
 
     async function loadDashboard() {
@@ -763,28 +817,52 @@
     }
 
     async function loadAuditIfAdmin() {
-      const panel = $("view-audit");
+      if (!isAdminUser()) {
+        return;
+      }
       try {
         const params = buildAuditQueryParams(true);
         const data = await apiFetch(`/api/audit?${params.toString()}`, { method: "GET" });
-        panel.classList.remove("hidden");
+        if (Array.isArray(data)) {
+          const mapped = data.map(auditRowFromEvent);
+          const total = mapped.length;
+          auditTotalPages = total === 0 ? 0 : Math.ceil(total / auditPageSize);
+          if (auditTotalPages === 0) {
+            auditPage = 1;
+          } else if (auditPage > auditTotalPages) {
+            auditPage = auditTotalPages;
+          } else if (auditPage < 1) {
+            auditPage = 1;
+          }
+          const start = (auditPage - 1) * auditPageSize;
+          const pageRows = mapped.slice(start, start + auditPageSize);
+          renderAuditRows(pageRows, total, auditPage, auditTotalPages);
+          return;
+        }
+
         const rows = (data.rows || []).map(auditRowFromEvent);
         auditPage = Number(data.page || 1);
         auditTotalPages = Number(data.total_pages || 0);
         renderAuditRows(rows, Number(data.total || 0), auditPage, auditTotalPages);
       } catch (err) {
         if (err && (err.status === 401 || err.status === 403)) {
-          panel.classList.add("hidden");
+          setView("main");
           return;
         }
-        panel.classList.remove("hidden");
         setMessage("audit-msg", err.message || "Failed to load audit events.");
       }
     }
 
     async function refreshAll() {
       await loadSchema();
-      await Promise.all([loadDashboard(), runSearch(), loadAuditIfAdmin()]);
+      const tasks = [loadDashboard(), runSearch()];
+      if (activeView === "ingestor") {
+        tasks.push(loadIngestorMeta());
+      }
+      if (isAdminUser()) {
+        tasks.push(loadAuditIfAdmin());
+      }
+      await Promise.all(tasks);
     }
 
     async function onLocalLogin(e) {
@@ -830,9 +908,27 @@
         try { await refreshAll(); } catch (err) { setMessage("search-msg", err.message || "Refresh failed"); }
       });
       $("menu-main").addEventListener("click", () => setView("main"));
+      $("menu-ingestor").addEventListener("click", async () => {
+        setView("ingestor");
+        try {
+          await loadIngestorDashboard(false);
+        } catch (err) {
+          setMessage("ingestor-msg", err.message || "Failed to load NSS Ingestor dashboard.");
+        }
+      });
       $("menu-audit").addEventListener("click", async () => {
         setView("audit");
         try { await loadAuditIfAdmin(); } catch (_) {}
+      });
+      $("ingestor-refresh").addEventListener("click", async () => {
+        try {
+          await loadIngestorDashboard(true);
+        } catch (err) {
+          setMessage("ingestor-msg", err.message || "Failed to refresh NSS Ingestor dashboard.");
+        }
+      });
+      $("ingestor-open").addEventListener("click", () => {
+        window.open("/ingestor/dashboard", "_blank", "noopener,noreferrer");
       });
       $("audit-filter-form").addEventListener("submit", async (e) => {
         e.preventDefault();

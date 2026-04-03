@@ -6,6 +6,7 @@
 
 - Query last 14-day parquet partitions with strict guardrails (max 7-day query window by default).
 - Troubleshooting dashboards and filtered search APIs.
+- Embedded `NSS Ingestor` dashboard tab (via `/ingestor/*` reverse-proxy).
 - CSV export with audit trail.
 - RBAC: `helpdesk`, `analyst`, `admin`.
 - Authentication modes:
@@ -35,6 +36,7 @@ cargo build --release
 - forces `bind_addr = 127.0.0.1:9191`
 - forces `auth.secure_cookie = true`
 - installs a hardened systemd service running as unprivileged `nssquarry`
+- configures nginx route `/ingestor/* -> 127.0.0.1:9090` for integrated ingestor dashboard
 
 When using `self_signed`:
 - DNS input generates certificate SAN `DNS:<name>`
