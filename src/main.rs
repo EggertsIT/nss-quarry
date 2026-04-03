@@ -404,6 +404,10 @@ async fn api_schema(
             mapped_from: state.cfg.data.fields.source_ip_field.clone(),
         },
         SchemaFieldInfo {
+            name: "server_ip_field".to_string(),
+            mapped_from: state.cfg.data.fields.server_ip_field.clone(),
+        },
+        SchemaFieldInfo {
             name: "device_field".to_string(),
             mapped_from: state.cfg.data.fields.device_field.clone(),
         },

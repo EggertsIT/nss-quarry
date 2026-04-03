@@ -12,6 +12,7 @@ action_field = "action"
 threat_field = "threatname"
 category_field = "urlcat"
 source_ip_field = "cip"
+server_ip_field = "sip"
 device_field = "devicehostname"
 department_field = "dept"
 

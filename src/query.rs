@@ -406,6 +406,11 @@ fn build_search_sql(
     );
     apply_filter(
         &mut where_clauses,
+        &fields.server_ip_field,
+        req.filters.server_ip.as_deref(),
+    );
+    apply_filter(
+        &mut where_clauses,
         &fields.device_field,
         req.filters.device.as_deref(),
     );
@@ -504,6 +509,7 @@ fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
         filters.threat.as_deref(),
         filters.category.as_deref(),
         filters.source_ip.as_deref(),
+        filters.server_ip.as_deref(),
         filters.device.as_deref(),
         filters.department.as_deref(),
     ]

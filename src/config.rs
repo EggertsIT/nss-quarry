@@ -58,6 +58,7 @@ impl AppConfig {
         validate_identifier(&self.data.fields.threat_field)?;
         validate_identifier(&self.data.fields.category_field)?;
         validate_identifier(&self.data.fields.source_ip_field)?;
+        validate_identifier(&self.data.fields.server_ip_field)?;
         validate_identifier(&self.data.fields.device_field)?;
         validate_identifier(&self.data.fields.department_field)?;
         for col in &self.query.default_columns {
@@ -152,6 +153,7 @@ pub struct FieldMap {
     pub threat_field: String,
     pub category_field: String,
     pub source_ip_field: String,
+    pub server_ip_field: String,
     pub device_field: String,
     pub department_field: String,
 }
@@ -166,6 +168,7 @@ impl Default for FieldMap {
             threat_field: "threatname".to_string(),
             category_field: "urlcat".to_string(),
             source_ip_field: "cip".to_string(),
+            server_ip_field: "sip".to_string(),
             device_field: "devicehostname".to_string(),
             department_field: "dept".to_string(),
         }

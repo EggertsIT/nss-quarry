@@ -40,6 +40,8 @@ pub struct SearchFilters {
     pub category: Option<String>,
     #[serde(alias = "cip")]
     pub source_ip: Option<String>,
+    #[serde(alias = "sip")]
+    pub server_ip: Option<String>,
     pub device: Option<String>,
     pub department: Option<String>,
 }
