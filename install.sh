@@ -4,6 +4,10 @@ set -euo pipefail
 DEMO_USERS=0
 INSTALL_DEPS=0
 INSTALL_RUST=0
+UNINSTALL=0
+YES=0
+PURGE_RUST=0
+RUST_INSTALLED_BY_INSTALLER=0
 
 usage() {
   cat <<'EOF'
@@ -20,6 +24,12 @@ Options:
       Auto-install OS dependencies on RHEL/Rocky via dnf (nginx, openssl, acl, build tools).
   --install-rust
       If cargo is missing and a build is required, install Rust toolchain via rustup.
+  --uninstall
+      Remove nss-quarry and revert installer-managed changes.
+  --purge-rust
+      Only with --uninstall: also remove Rust toolchain if it was installed by this installer.
+  --yes
+      Non-interactive yes for uninstall confirmation prompts.
   -h, --help
       Show this help text.
 EOF
@@ -48,6 +58,18 @@ while [[ $# -gt 0 ]]; do
       INSTALL_RUST=1
       shift
       ;;
+    --uninstall)
+      UNINSTALL=1
+      shift
+      ;;
+    --yes)
+      YES=1
+      shift
+      ;;
+    --purge-rust)
+      PURGE_RUST=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -57,6 +79,24 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ "$UNINSTALL" -eq 1 && ("$INSTALL_DEPS" -eq 1 || "$INSTALL_RUST" -eq 1 || "$DEMO_USERS" -eq 1) ]]; then
+  fail "--uninstall cannot be combined with install/demo flags"
+fi
+if [[ "$UNINSTALL" -eq 0 && "$PURGE_RUST" -eq 1 ]]; then
+  fail "--purge-rust can only be used together with --uninstall"
+fi
+
+APP_USER="${APP_USER:-nssquarry}"
+APP_GROUP="${APP_GROUP:-$APP_USER}"
+ETC_DIR="${ETC_DIR:-/etc/nss-quarry}"
+DATA_DIR="${DATA_DIR:-/var/lib/nss-quarry}"
+CONFIG_PATH="${CONFIG_PATH:-$ETC_DIR/config.toml}"
+BIN_PATH="${BIN_PATH:-/usr/local/bin/nss-quarry}"
+SERVICE_PATH="${SERVICE_PATH:-/etc/systemd/system/nss-quarry.service}"
+CERT_DIR="${CERT_DIR:-$ETC_DIR/certs}"
+NGINX_CONF="${NGINX_CONF:-/etc/nginx/conf.d/nss-quarry.conf}"
+STATE_FILE="${STATE_FILE:-$ETC_DIR/install-state.env}"
 
 install_os_dependencies() {
   require_cmd dnf
@@ -88,6 +128,7 @@ install_rust_toolchain() {
     source /root/.cargo/env
   fi
   command -v cargo >/dev/null 2>&1 || fail "cargo still missing after rustup install"
+  RUST_INSTALLED_BY_INSTALLER=1
 }
 
 require_cmd() {
@@ -244,8 +285,174 @@ EOF
   log "Added demo user '$username' with role '$role'"
 }
 
+confirm_default_no() {
+  local question="$1"
+  if [[ "$YES" -eq 1 ]]; then
+    return 0
+  fi
+  local answer
+  read -r -p "$question [no]: " answer
+  answer="${answer:-no}"
+  answer="$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')"
+  [[ "$answer" == "yes" || "$answer" == "y" ]]
+}
+
+backup_file_if_exists() {
+  local src="$1"
+  local backup="$2"
+  if [[ -f "$src" ]]; then
+    install -d -m 0750 -o root -g "$APP_GROUP" "$(dirname "$backup")"
+    cp -a "$src" "$backup"
+    return 0
+  fi
+  return 1
+}
+
+restore_or_remove() {
+  local target="$1"
+  local backup="$2"
+  if [[ -n "$backup" && -f "$backup" ]]; then
+    install -d -m 0755 -o root -g root "$(dirname "$target")"
+    cp -a "$backup" "$target"
+  else
+    rm -f "$target"
+  fi
+}
+
+write_install_state() {
+  local file="$1"
+  install -d -m 0750 -o root -g "$APP_GROUP" "$(dirname "$file")"
+  cat >"$file" <<EOF
+APP_USER=$APP_USER
+APP_GROUP=$APP_GROUP
+ETC_DIR=$ETC_DIR
+DATA_DIR=$DATA_DIR
+CONFIG_PATH=$CONFIG_PATH
+BIN_PATH=$BIN_PATH
+SERVICE_PATH=$SERVICE_PATH
+CERT_DIR=$CERT_DIR
+NGINX_CONF=$NGINX_CONF
+PARQUET_ROOT=$PARQUET_ROOT
+TLS_MODE=$TLS_MODE
+TLS_CERT=$TLS_CERT
+TLS_KEY=$TLS_KEY
+APP_USER_CREATED=$APP_USER_CREATED
+APP_GROUP_CREATED=$APP_GROUP_CREATED
+ETC_DIR_CREATED=$ETC_DIR_CREATED
+DATA_DIR_CREATED=$DATA_DIR_CREATED
+CONFIG_BACKUP=$CONFIG_BACKUP
+SERVICE_BACKUP=$SERVICE_BACKUP
+NGINX_BACKUP=$NGINX_BACKUP
+BIN_BACKUP=$BIN_BACKUP
+SELF_SIGNED_CERT_CREATED=$SELF_SIGNED_CERT_CREATED
+RUST_INSTALLED_BY_INSTALLER=$RUST_INSTALLED_BY_INSTALLER
+EOF
+  chmod 0600 "$file"
+}
+
+uninstall_routine() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    log "No install state file found at $STATE_FILE. Proceeding with defaults."
+  else
+    # shellcheck disable=SC1090
+    source "$STATE_FILE"
+  fi
+
+  APP_USER="${APP_USER:-nssquarry}"
+  APP_GROUP="${APP_GROUP:-$APP_USER}"
+  ETC_DIR="${ETC_DIR:-/etc/nss-quarry}"
+  DATA_DIR="${DATA_DIR:-/var/lib/nss-quarry}"
+  CONFIG_PATH="${CONFIG_PATH:-$ETC_DIR/config.toml}"
+  BIN_PATH="${BIN_PATH:-/usr/local/bin/nss-quarry}"
+  SERVICE_PATH="${SERVICE_PATH:-/etc/systemd/system/nss-quarry.service}"
+  CERT_DIR="${CERT_DIR:-$ETC_DIR/certs}"
+  NGINX_CONF="${NGINX_CONF:-/etc/nginx/conf.d/nss-quarry.conf}"
+
+  CONFIG_BACKUP="${CONFIG_BACKUP:-}"
+  SERVICE_BACKUP="${SERVICE_BACKUP:-}"
+  NGINX_BACKUP="${NGINX_BACKUP:-}"
+  BIN_BACKUP="${BIN_BACKUP:-}"
+  APP_USER_CREATED="${APP_USER_CREATED:-0}"
+  APP_GROUP_CREATED="${APP_GROUP_CREATED:-0}"
+  ETC_DIR_CREATED="${ETC_DIR_CREATED:-0}"
+  DATA_DIR_CREATED="${DATA_DIR_CREATED:-0}"
+  SELF_SIGNED_CERT_CREATED="${SELF_SIGNED_CERT_CREATED:-0}"
+  RUST_INSTALLED_BY_INSTALLER="${RUST_INSTALLED_BY_INSTALLER:-0}"
+  TLS_CERT="${TLS_CERT:-}"
+  TLS_KEY="${TLS_KEY:-}"
+
+  if ! confirm_default_no "Uninstall nss-quarry and revert installer-managed changes?"; then
+    log "Uninstall cancelled."
+    exit 0
+  fi
+
+  log "Stopping and disabling nss-quarry service"
+  systemctl disable --now nss-quarry >/dev/null 2>&1 || true
+
+  log "Restoring/removing systemd unit"
+  restore_or_remove "$SERVICE_PATH" "$SERVICE_BACKUP"
+  systemctl daemon-reload
+
+  log "Restoring/removing nginx config"
+  restore_or_remove "$NGINX_CONF" "$NGINX_BACKUP"
+  if systemctl is-active --quiet nginx; then
+    systemctl reload nginx || true
+  fi
+
+  log "Restoring/removing config and binary"
+  restore_or_remove "$CONFIG_PATH" "$CONFIG_BACKUP"
+  restore_or_remove "$BIN_PATH" "$BIN_BACKUP"
+
+  if [[ "$SELF_SIGNED_CERT_CREATED" == "1" ]]; then
+    log "Removing installer-generated self-signed certs"
+    rm -f "$TLS_CERT" "$TLS_KEY"
+  fi
+
+  if [[ "$PURGE_RUST" == "1" ]] && [[ "$RUST_INSTALLED_BY_INSTALLER" == "1" ]]; then
+    if confirm_default_no "Remove /root/.cargo and /root/.rustup toolchains installed by this script?"; then
+      log "Removing installer-managed Rust toolchain from /root"
+      rm -rf /root/.cargo /root/.rustup
+    else
+      log "Skipping Rust toolchain purge."
+    fi
+  elif [[ "$PURGE_RUST" == "1" ]]; then
+    log "Rust purge requested but state does not indicate installer-managed Rust. Skipping."
+  fi
+
+  if [[ "$DATA_DIR_CREATED" == "1" ]]; then
+    log "Removing installer-created data dir $DATA_DIR"
+    rm -rf "$DATA_DIR"
+  fi
+
+  if [[ "$ETC_DIR_CREATED" == "1" ]]; then
+    log "Removing installer-created config dir $ETC_DIR"
+    rm -rf "$ETC_DIR"
+  else
+    rm -f "$STATE_FILE"
+  fi
+
+  if [[ "$APP_USER_CREATED" == "1" ]] && id -u "$APP_USER" >/dev/null 2>&1; then
+    log "Removing installer-created user $APP_USER"
+    userdel "$APP_USER" >/dev/null 2>&1 || true
+  fi
+  if [[ "$APP_GROUP_CREATED" == "1" ]] && getent group "$APP_GROUP" >/dev/null 2>&1; then
+    log "Removing installer-created group $APP_GROUP"
+    groupdel "$APP_GROUP" >/dev/null 2>&1 || true
+  fi
+
+  log "Uninstall complete."
+}
+
 if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
   fail "run install.sh as root (it installs system files). The service itself runs as an unprivileged user."
+fi
+
+if [[ "$UNINSTALL" -eq 1 ]]; then
+  require_cmd systemctl
+  require_cmd id
+  require_cmd getent
+  uninstall_routine
+  exit 0
 fi
 
 if [[ "$INSTALL_DEPS" -eq 1 ]]; then
@@ -253,7 +460,10 @@ if [[ "$INSTALL_DEPS" -eq 1 ]]; then
 fi
 
 require_cmd id
+require_cmd getent
 require_cmd useradd
+require_cmd usermod
+require_cmd groupadd
 require_cmd install
 require_cmd sed
 require_cmd systemctl
@@ -261,15 +471,6 @@ require_cmd openssl
 require_cmd nginx
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-APP_USER="${APP_USER:-nssquarry}"
-APP_GROUP="${APP_GROUP:-$APP_USER}"
-ETC_DIR="${ETC_DIR:-/etc/nss-quarry}"
-DATA_DIR="${DATA_DIR:-/var/lib/nss-quarry}"
-CONFIG_PATH="${CONFIG_PATH:-$ETC_DIR/config.toml}"
-BIN_PATH="${BIN_PATH:-/usr/local/bin/nss-quarry}"
-SERVICE_PATH="${SERVICE_PATH:-/etc/systemd/system/nss-quarry.service}"
-CERT_DIR="${CERT_DIR:-$ETC_DIR/certs}"
-NGINX_CONF="${NGINX_CONF:-/etc/nginx/conf.d/nss-quarry.conf}"
 
 log "HTTPS-first installer for nss-quarry"
 prompt FQDN "Public DNS name or IPv4 for nss-quarry" "nss-quarry.example.com"
@@ -311,9 +512,38 @@ fi
 prompt PARQUET_ROOT "Path to nss-to-parquet output directory" "$DETECTED_PARQUET_ROOT"
 yes_no_default_yes GRANT_PARQUET_ACCESS "Grant $APP_USER read access to $PARQUET_ROOT now?"
 
+APP_USER_CREATED=0
+APP_GROUP_CREATED=0
+ETC_DIR_CREATED=0
+DATA_DIR_CREATED=0
+SELF_SIGNED_CERT_CREATED=0
+CONFIG_BACKUP=""
+SERVICE_BACKUP=""
+NGINX_BACKUP=""
+BIN_BACKUP=""
+
+if [[ ! -d "$ETC_DIR" ]]; then
+  ETC_DIR_CREATED=1
+fi
+if [[ ! -d "$DATA_DIR" ]]; then
+  DATA_DIR_CREATED=1
+fi
+
+group_existed=1
+if ! getent group "$APP_GROUP" >/dev/null 2>&1; then
+  group_existed=0
+  log "Creating service group $APP_GROUP"
+  groupadd --system "$APP_GROUP"
+  APP_GROUP_CREATED=1
+fi
+
 log "Ensuring service user exists: $APP_USER"
 if ! id -u "$APP_USER" >/dev/null 2>&1; then
-  useradd --system --create-home --home-dir "$DATA_DIR" --shell /sbin/nologin "$APP_USER"
+  useradd --system --create-home --home-dir "$DATA_DIR" --shell /sbin/nologin --gid "$APP_GROUP" "$APP_USER"
+  APP_USER_CREATED=1
+elif [[ "$group_existed" -eq 0 ]]; then
+  # User existed but group did not; make sure runtime user can access group-owned paths.
+  usermod -a -G "$APP_GROUP" "$APP_USER"
 fi
 
 log "Creating directories"
@@ -333,8 +563,19 @@ if [[ ! -x "$SCRIPT_DIR/target/release/nss-quarry" ]]; then
   (cd "$SCRIPT_DIR" && cargo build --release)
 fi
 
+BACKUP_DIR="$ETC_DIR/backups"
+bin_backup_candidate="$BACKUP_DIR/nss-quarry.bin.preinstall"
+if backup_file_if_exists "$BIN_PATH" "$bin_backup_candidate"; then
+  BIN_BACKUP="$bin_backup_candidate"
+fi
+
 log "Installing binary to $BIN_PATH"
 install -m 0755 "$SCRIPT_DIR/target/release/nss-quarry" "$BIN_PATH"
+
+config_backup_candidate="$BACKUP_DIR/config.toml.preinstall"
+if backup_file_if_exists "$CONFIG_PATH" "$config_backup_candidate"; then
+  CONFIG_BACKUP="$config_backup_candidate"
+fi
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   log "Installing initial config to $CONFIG_PATH"
@@ -397,6 +638,7 @@ if [[ "$TLS_MODE" == "self_signed" ]]; then
       -addext "$san_ext" \
       -keyout "$TLS_KEY" \
       -out "$TLS_CERT"
+    SELF_SIGNED_CERT_CREATED=1
   else
     log "Using existing self-signed cert at $TLS_CERT"
   fi
@@ -409,6 +651,11 @@ if command -v runuser >/dev/null 2>&1; then
   runuser -u "$APP_USER" -- "$BIN_PATH" validate-config --config "$CONFIG_PATH"
 else
   su -s /bin/bash -c "\"$BIN_PATH\" validate-config --config \"$CONFIG_PATH\"" "$APP_USER"
+fi
+
+service_backup_candidate="$BACKUP_DIR/nss-quarry.service.preinstall"
+if backup_file_if_exists "$SERVICE_PATH" "$service_backup_candidate"; then
+  SERVICE_BACKUP="$service_backup_candidate"
 fi
 
 log "Writing systemd unit: $SERVICE_PATH"
@@ -436,6 +683,11 @@ UMask=0027
 [Install]
 WantedBy=multi-user.target
 EOF
+
+nginx_backup_candidate="$BACKUP_DIR/nss-quarry.nginx.preinstall"
+if backup_file_if_exists "$NGINX_CONF" "$nginx_backup_candidate"; then
+  NGINX_BACKUP="$nginx_backup_candidate"
+fi
 
 log "Writing nginx TLS reverse proxy: $NGINX_CONF"
 cat >"$NGINX_CONF" <<EOF
@@ -478,10 +730,13 @@ systemctl enable --now nss-quarry
 systemctl enable --now nginx
 systemctl reload nginx
 
+write_install_state "$STATE_FILE"
+
 log "Install complete."
 log "Service status: systemctl status nss-quarry --no-pager"
 log "Health check: curl -k https://$FQDN/healthz"
 log "Configured parquet root: $PARQUET_ROOT"
+log "Install state saved: $STATE_FILE"
 if [[ "$TLS_MODE" == "self_signed" ]]; then
   log "Note: self-signed cert installed. Replace with org-trusted certs by rerunning with TLS mode 'provided'."
 fi

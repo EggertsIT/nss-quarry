@@ -74,6 +74,20 @@ Do not use `--demo-users` in production.
 See full details:
 - `docs/install-https.md`
 
+## Uninstall
+
+Standard uninstall (keeps host Rust toolchains):
+
+```bash
+sudo ./install.sh --uninstall
+```
+
+Optional: also purge `/root/.cargo` and `/root/.rustup` if they were installed by this installer:
+
+```bash
+sudo ./install.sh --uninstall --purge-rust
+```
+
 ## Configuration
 
 1. Copy template:

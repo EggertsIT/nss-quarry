@@ -16,6 +16,7 @@ This guide installs `nss-quarry` with HTTPS enabled by default.
 - offers to grant `nssquarry` read access to Parquet data (ACL preferred, group fallback)
 - installs systemd unit `/etc/systemd/system/nss-quarry.service`
 - installs Nginx reverse proxy `/etc/nginx/conf.d/nss-quarry.conf`
+- writes install state file `/etc/nss-quarry/install-state.env` for clean uninstall/rollback
 - supports endpoint identity as DNS name or IPv4
 - in `self_signed` mode:
   - DNS input -> SAN `DNS:<name>`
@@ -110,6 +111,34 @@ Installer rewrites Nginx config, validates it, and reloads services.
 - Installation runs as root.
 - Runtime service runs as unprivileged user `nssquarry`.
 - App is local-only (`127.0.0.1:9191`), externally exposed only through HTTPS proxy.
+
+## Uninstall / Rollback
+
+Uninstall installer-managed resources:
+
+```bash
+sudo ./install.sh --uninstall
+```
+
+What uninstall does:
+- stops/disables `nss-quarry`
+- restores pre-install backups for:
+  - systemd unit
+  - nginx config
+  - app config
+  - binary
+- removes installer-generated self-signed certs
+- removes installer-created service user/group and directories (when created by installer)
+
+Rust safety:
+- default uninstall does **not** remove host Rust toolchains
+- explicit opt-in only:
+
+```bash
+sudo ./install.sh --uninstall --purge-rust
+```
+
+`--purge-rust` only removes `/root/.cargo` and `/root/.rustup` if install state indicates this installer created them.
 
 ## OIDC Follow-Up
 
