@@ -137,11 +137,41 @@ have_service_unit() {
     return 0
   fi
 
+  if systemctl cat "$unit" >/dev/null 2>&1; then
+    return 0
+  fi
+
   if [[ -f "/etc/systemd/system/$unit" || -f "/usr/lib/systemd/system/$unit" || -f "/lib/systemd/system/$unit" ]]; then
     return 0
   fi
 
   return 1
+}
+
+is_ipv4_address() {
+  local ip="$1"
+  if [[ ! "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    return 1
+  fi
+  local a b c d
+  IFS='.' read -r a b c d <<<"$ip"
+  for octet in "$a" "$b" "$c" "$d"; do
+    if ((octet < 0 || octet > 255)); then
+      return 1
+    fi
+  done
+  return 0
+}
+
+url_host_component() {
+  local host="$1"
+  # Currently only special-case IPv4; DNS names pass through.
+  printf '%s' "$host"
+}
+
+sanitize_cert_name() {
+  local raw="$1"
+  printf '%s' "$raw" | sed -E 's/[^A-Za-z0-9._-]+/_/g'
 }
 
 resolve_parquet_root_from_ingestor_config() {
@@ -242,7 +272,7 @@ CERT_DIR="${CERT_DIR:-$ETC_DIR/certs}"
 NGINX_CONF="${NGINX_CONF:-/etc/nginx/conf.d/nss-quarry.conf}"
 
 log "HTTPS-first installer for nss-quarry"
-prompt FQDN "Public DNS name for nss-quarry" "nss-quarry.example.com"
+prompt FQDN "Public DNS name or IPv4 for nss-quarry" "nss-quarry.example.com"
 prompt TLS_MODE "TLS mode (self_signed/provided)" "self_signed"
 
 if [[ "$TLS_MODE" != "self_signed" && "$TLS_MODE" != "provided" ]]; then
@@ -261,7 +291,7 @@ fi
 INGESTOR_UNIT=""
 INGESTOR_CONFIG=""
 DETECTED_PARQUET_ROOT="/var/lib/nss-ingestor/data"
-if have_service_unit "nss-ingestor.service"; then
+if have_service_unit "nss-ingestor.service" || [[ -f "/etc/nss-ingestor/config.toml" ]]; then
   INGESTOR_UNIT="nss-ingestor.service"
   INGESTOR_CONFIG="/etc/nss-ingestor/config.toml"
 fi
@@ -317,7 +347,7 @@ log "Applying secure baseline to config"
 set_kv_line "$CONFIG_PATH" '^bind_addr = ' 'bind_addr = "127.0.0.1:9191"'
 set_kv_line "$CONFIG_PATH" '^parquet_root = ' "parquet_root = \"$PARQUET_ROOT\""
 set_kv_line "$CONFIG_PATH" '^secure_cookie = ' 'secure_cookie = true'
-set_kv_line "$CONFIG_PATH" '^redirect_url = ' "redirect_url = \"https://$FQDN/auth/callback\""
+set_kv_line "$CONFIG_PATH" '^redirect_url = ' "redirect_url = \"https://$(url_host_component "$FQDN")/auth/callback\""
 chown root:"$APP_GROUP" "$CONFIG_PATH"
 chmod 0640 "$CONFIG_PATH"
 
@@ -347,10 +377,16 @@ if [[ "$DEMO_USERS" -eq 1 ]]; then
 fi
 
 if [[ "$TLS_MODE" == "self_signed" ]]; then
-  TLS_CERT="$CERT_DIR/$FQDN.crt"
-  TLS_KEY="$CERT_DIR/$FQDN.key"
+  cert_basename="$(sanitize_cert_name "$FQDN")"
+  TLS_CERT="$CERT_DIR/$cert_basename.crt"
+  TLS_KEY="$CERT_DIR/$cert_basename.key"
   if [[ ! -f "$TLS_CERT" || ! -f "$TLS_KEY" ]]; then
     log "Generating self-signed TLS certificate for $FQDN"
+    san_ext="subjectAltName=DNS:$FQDN"
+    if is_ipv4_address "$FQDN"; then
+      san_ext="subjectAltName=IP:$FQDN"
+      log "Input detected as IPv4; generating certificate with IP SAN"
+    fi
     openssl req \
       -x509 \
       -newkey rsa:4096 \
@@ -358,7 +394,7 @@ if [[ "$TLS_MODE" == "self_signed" ]]; then
       -nodes \
       -days 825 \
       -subj "/CN=$FQDN" \
-      -addext "subjectAltName=DNS:$FQDN" \
+      -addext "$san_ext" \
       -keyout "$TLS_KEY" \
       -out "$TLS_CERT"
   else

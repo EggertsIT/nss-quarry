@@ -25,7 +25,7 @@ cargo build --release
 
 `install.sh` sets up `nss-quarry` behind Nginx with HTTPS by default.
 
-- prompts for FQDN
+- prompts for endpoint identity (DNS name or IPv4)
 - TLS modes:
   - `self_signed` (default, generated during install)
   - `provided` (use org/internal PKI cert/key)
@@ -35,6 +35,10 @@ cargo build --release
 - forces `bind_addr = 127.0.0.1:9191`
 - forces `auth.secure_cookie = true`
 - installs a hardened systemd service running as unprivileged `nssquarry`
+
+When using `self_signed`:
+- DNS input generates certificate SAN `DNS:<name>`
+- IPv4 input generates certificate SAN `IP:<address>`
 
 Run:
 

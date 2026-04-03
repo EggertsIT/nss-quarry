@@ -16,6 +16,10 @@ This guide installs `nss-quarry` with HTTPS enabled by default.
 - offers to grant `nssquarry` read access to Parquet data (ACL preferred, group fallback)
 - installs systemd unit `/etc/systemd/system/nss-quarry.service`
 - installs Nginx reverse proxy `/etc/nginx/conf.d/nss-quarry.conf`
+- supports endpoint identity as DNS name or IPv4
+- in `self_signed` mode:
+  - DNS input -> SAN `DNS:<name>`
+  - IPv4 input -> SAN `IP:<address>`
 
 ## Prerequisites
 
@@ -56,8 +60,10 @@ Use demo mode only for testing/training environments.
 ## TLS Modes
 
 Installer prompt:
-- `self_signed` (default): generates cert and key for your FQDN
+- `self_signed` (default): generates cert and key for your endpoint identity
 - `provided`: uses existing certificate and key paths
+
+You can enter either a DNS name or an IPv4 address as endpoint identity.
 
 Use `provided` in enterprise production whenever possible (internal PKI or public CA).
 
