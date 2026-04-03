@@ -29,7 +29,7 @@ cargo build --release
 - TLS modes:
   - `self_signed` (default, generated during install)
   - `provided` (use org/internal PKI cert/key)
-- detects `nss-ingestor`/`nss-ingest` and suggests upstream Parquet root
+- detects `nss-ingestor` and suggests upstream Parquet root
 - prompts and writes `data.parquet_root`
 - offers automatic permission grant so `nssquarry` can read upstream Parquet files
 - forces `bind_addr = 127.0.0.1:9191`

@@ -10,8 +10,8 @@ This guide installs `nss-quarry` with HTTPS enabled by default.
   - `bind_addr = "127.0.0.1:9191"`
   - `secure_cookie = true`
   - `redirect_url = "https://<FQDN>/auth/callback"`
-- detects `nss-ingestor` / `nss-ingest` service when present
-- detects/parses upstream Parquet path (from `/etc/nss-ingestor/config.toml` or `/etc/nss-ingest/config.toml`)
+- detects `nss-ingestor` service when present
+- detects/parses upstream Parquet path (from `/etc/nss-ingestor/config.toml`)
 - prompts for `data.parquet_root` and writes it to `nss-quarry` config
 - offers to grant `nssquarry` read access to Parquet data (ACL preferred, group fallback)
 - installs systemd unit `/etc/systemd/system/nss-quarry.service`
@@ -76,7 +76,7 @@ For self-signed mode, browsers show trust warnings until your CA trust is config
 `nss-quarry` must be able to read Parquet files written by `nss-to-parquet`.
 
 Installer flow:
-1. Detects ingestion service (`nss-ingestor.service` or `nss-ingest.service`) if installed.
+1. Detects ingestion service (`nss-ingestor.service`) if installed.
 2. Suggests detected Parquet path from upstream config.
 3. Prompts you to confirm/override that path.
 4. Offers automatic access grant for user `nssquarry`:

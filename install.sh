@@ -254,9 +254,6 @@ DETECTED_PARQUET_ROOT="/var/lib/nss-ingestor/data"
 if have_service_unit "nss-ingestor.service"; then
   INGESTOR_UNIT="nss-ingestor.service"
   INGESTOR_CONFIG="/etc/nss-ingestor/config.toml"
-elif have_service_unit "nss-ingest.service"; then
-  INGESTOR_UNIT="nss-ingest.service"
-  INGESTOR_CONFIG="/etc/nss-ingest/config.toml"
 fi
 
 if [[ -n "$INGESTOR_UNIT" ]]; then
@@ -268,7 +265,7 @@ if [[ -n "$INGESTOR_UNIT" ]]; then
     log "Could not parse parquet root from $INGESTOR_CONFIG, using default $DETECTED_PARQUET_ROOT"
   fi
 else
-  log "No nss-ingestor/nss-ingest service detected. Provide parquet root manually."
+  log "No nss-ingestor.service detected. Provide parquet root manually."
 fi
 
 prompt PARQUET_ROOT "Path to nss-to-parquet output directory" "$DETECTED_PARQUET_ROOT"
