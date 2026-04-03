@@ -131,7 +131,17 @@ set_kv_line() {
 
 have_service_unit() {
   local unit="$1"
-  systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}' | grep -qx "$unit"
+  local load_state
+  load_state="$(systemctl show "$unit" -p LoadState --value 2>/dev/null || true)"
+  if [[ "$load_state" == "loaded" || "$load_state" == "masked" ]]; then
+    return 0
+  fi
+
+  if [[ -f "/etc/systemd/system/$unit" || -f "/usr/lib/systemd/system/$unit" || -f "/lib/systemd/system/$unit" ]]; then
+    return 0
+  fi
+
+  return 1
 }
 
 resolve_parquet_root_from_ingestor_config() {
