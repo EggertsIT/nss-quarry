@@ -67,6 +67,9 @@ impl AppConfig {
         for col in &self.security.helpdesk_mask_fields {
             validate_identifier(col)?;
         }
+        if self.audit.rotate_max_bytes > 0 && self.audit.rotate_max_files == 0 {
+            anyhow::bail!("audit.rotate_max_files must be > 0 when audit.rotate_max_bytes is set");
+        }
 
         match self.auth.mode {
             AuthMode::LocalUsers => {
@@ -325,12 +328,18 @@ impl Default for QueryConfig {
 #[serde(default)]
 pub struct AuditConfig {
     pub path: PathBuf,
+    pub retention_days: u64,
+    pub rotate_max_bytes: u64,
+    pub rotate_max_files: u32,
 }
 
 impl Default for AuditConfig {
     fn default() -> Self {
         Self {
             path: PathBuf::from("/var/lib/nss-quarry/audit.log"),
+            retention_days: 0,
+            rotate_max_bytes: 0,
+            rotate_max_files: 7,
         }
     }
 }
@@ -431,6 +440,20 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("auth.oidc.redirect_url must use https in oidc modes")
+        );
+    }
+
+    #[test]
+    fn validate_rejects_rotate_bytes_without_rotate_files() {
+        let mut cfg = valid_local_config();
+        cfg.audit.rotate_max_bytes = 1024;
+        cfg.audit.rotate_max_files = 0;
+        let err = cfg
+            .validate()
+            .expect_err("must reject invalid audit rotation config");
+        assert!(
+            err.to_string()
+                .contains("audit.rotate_max_files must be > 0 when audit.rotate_max_bytes is set")
         );
     }
 }

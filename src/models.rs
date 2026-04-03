@@ -119,3 +119,12 @@ pub struct AuditEvent {
     pub outcome: String,
     pub metadata: serde_json::Value,
 }
+
+#[derive(Debug, Serialize)]
+pub struct AuditListResponse {
+    pub rows: Vec<AuditEvent>,
+    pub page: u32,
+    pub page_size: u32,
+    pub total: usize,
+    pub total_pages: u32,
+}

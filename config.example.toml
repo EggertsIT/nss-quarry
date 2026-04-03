@@ -55,3 +55,6 @@ default_columns = ["time", "action", "eurl", "ologin", "cip", "urlcat", "threatn
 
 [audit]
 path = "/var/lib/nss-quarry/audit.log"
+retention_days = 0
+rotate_max_bytes = 0
+rotate_max_files = 7

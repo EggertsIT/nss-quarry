@@ -316,9 +316,8 @@
     let latestSearchRequest = null;
     let latestSchema = null;
     let activeView = "main";
-    let latestAuditRows = [];
-    let filteredAuditRows = [];
     let auditPage = 1;
+    let auditTotalPages = 0;
     const auditPageSize = 50;
 
     function $(id) { return document.getElementById(id); }
@@ -551,104 +550,79 @@
       };
     }
 
-    function renderAuditRows(rows) {
+    function renderAuditRows(rows, total, page, totalPages) {
       const host = $("audit-view");
       host.innerHTML = "";
       if (!rows || rows.length === 0) {
         host.innerHTML = "<div class='muted' style='padding:10px;'>No audit events match current filters.</div>";
-        $("audit-meta").textContent = "Rows: 0";
+        $("audit-meta").textContent = `Rows: ${total || 0}`;
         $("audit-page").textContent = "Page 0/0";
         $("audit-prev").disabled = true;
         $("audit-next").disabled = true;
         return;
       }
-      const totalPages = Math.max(1, Math.ceil(rows.length / auditPageSize));
-      if (auditPage > totalPages) auditPage = totalPages;
-      if (auditPage < 1) auditPage = 1;
-      const start = (auditPage - 1) * auditPageSize;
-      const pageRows = rows.slice(start, start + auditPageSize);
-
-      const data = pageRows.map(r => [r.at, r.actor, r.role, r.action, r.outcome, r.metadata]);
+      const data = rows.map(r => [r.at, r.actor, r.role, r.action, r.outcome, r.metadata]);
       host.appendChild(buildTable(["at", "actor", "role", "action", "outcome", "metadata"], data));
-      $("audit-meta").textContent = `Rows: ${rows.length}`;
-      $("audit-page").textContent = `Page ${auditPage}/${totalPages} (showing ${pageRows.length} of ${rows.length})`;
-      $("audit-prev").disabled = auditPage <= 1;
-      $("audit-next").disabled = auditPage >= totalPages;
+      $("audit-meta").textContent = `Rows: ${total}`;
+      $("audit-page").textContent = `Page ${page}/${totalPages} (showing ${rows.length} of ${total})`;
+      $("audit-prev").disabled = page <= 1;
+      $("audit-next").disabled = page >= totalPages;
     }
 
-    function applyAuditFilters() {
+    function buildAuditQueryParams(includePaging = true) {
+      const params = new URLSearchParams();
       const fromIso = inputToIso("audit-from");
       const toIso = inputToIso("audit-to");
       const actor = normalizeFilterValue("audit-actor");
       const action = normalizeFilterValue("audit-action");
       const outcome = normalizeFilterValue("audit-outcome");
       const text = normalizeFilterValue("audit-text");
+      if (fromIso) params.set("from", fromIso);
+      if (toIso) params.set("to", toIso);
+      if (actor) params.set("actor", actor);
+      if (action) params.set("action", action);
+      if (outcome) params.set("outcome", outcome);
+      if (text) params.set("text", text);
+      if (includePaging) {
+        params.set("page", String(auditPage));
+        params.set("page_size", String(auditPageSize));
+      }
+      return params;
+    }
 
-      const actorLc = actor ? actor.toLowerCase() : null;
-      const actionLc = action ? action.toLowerCase() : null;
-      const outcomeLc = outcome ? outcome.toLowerCase() : null;
-      const textLc = text ? text.toLowerCase() : null;
-      const fromTs = fromIso ? Date.parse(fromIso) : null;
-      const toTs = toIso ? Date.parse(toIso) : null;
-
-      filteredAuditRows = latestAuditRows.filter(r => {
-        const atTs = Date.parse(r.at);
-        if (fromTs != null && Number.isFinite(atTs) && atTs < fromTs) return false;
-        if (toTs != null && Number.isFinite(atTs) && atTs > toTs) return false;
-        if (actorLc && !String(r.actor).toLowerCase().includes(actorLc)) return false;
-        if (actionLc && !String(r.action).toLowerCase().includes(actionLc)) return false;
-        if (outcomeLc && !String(r.outcome).toLowerCase().includes(outcomeLc)) return false;
-        if (textLc) {
-          const hay = `${r.at} ${r.actor} ${r.role} ${r.action} ${r.outcome} ${r.metadata}`.toLowerCase();
-          if (!hay.includes(textLc)) return false;
-        }
-        return true;
-      });
+    async function applyAuditFilters() {
       auditPage = 1;
-      renderAuditRows(filteredAuditRows);
+      await loadAuditIfAdmin();
       setMessage("audit-msg", "", true);
     }
 
-    function resetAuditFilters() {
+    async function resetAuditFilters() {
       $("audit-from").value = "";
       $("audit-to").value = "";
       $("audit-actor").value = "";
       $("audit-action").value = "";
       $("audit-outcome").value = "";
       $("audit-text").value = "";
-      filteredAuditRows = [...latestAuditRows];
       auditPage = 1;
-      renderAuditRows(filteredAuditRows);
+      await loadAuditIfAdmin();
       setMessage("audit-msg", "Audit filters reset.", true);
     }
 
-    function csvEscape(value) {
-      const s = value == null ? "" : String(value);
-      if (s.includes(",") || s.includes("\"") || s.includes("\n")) {
-        return `"${s.replace(/"/g, "\"\"")}"`;
+    async function exportAuditCsv() {
+      const params = buildAuditQueryParams(false);
+      const res = await fetch(`/api/audit/export/csv?${params.toString()}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        let msg = `${res.status} ${res.statusText}`;
+        try {
+          const e = await res.json();
+          if (e.error) msg = e.error;
+        } catch (_) {}
+        throw new Error(msg);
       }
-      return s;
-    }
-
-    function exportAuditCsv() {
-      const rows = filteredAuditRows || [];
-      if (rows.length === 0) {
-        setMessage("audit-msg", "No audit rows to export.");
-        return;
-      }
-      const headers = ["at", "actor", "role", "action", "outcome", "metadata"];
-      const lines = [headers.join(",")];
-      for (const r of rows) {
-        lines.push([
-          csvEscape(r.at),
-          csvEscape(r.actor),
-          csvEscape(r.role),
-          csvEscape(r.action),
-          csvEscape(r.outcome),
-          csvEscape(r.metadata),
-        ].join(","));
-      }
-      const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv;charset=utf-8" });
+      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -791,21 +765,20 @@
     async function loadAuditIfAdmin() {
       const panel = $("view-audit");
       try {
-        const rows = await apiFetch("/api/audit", { method: "GET" });
+        const params = buildAuditQueryParams(true);
+        const data = await apiFetch(`/api/audit?${params.toString()}`, { method: "GET" });
         panel.classList.remove("hidden");
-        if (!rows || rows.length === 0) {
-          latestAuditRows = [];
-          filteredAuditRows = [];
-          auditPage = 1;
-          renderAuditRows(filteredAuditRows);
+        const rows = (data.rows || []).map(auditRowFromEvent);
+        auditPage = Number(data.page || 1);
+        auditTotalPages = Number(data.total_pages || 0);
+        renderAuditRows(rows, Number(data.total || 0), auditPage, auditTotalPages);
+      } catch (err) {
+        if (err && (err.status === 401 || err.status === 403)) {
+          panel.classList.add("hidden");
           return;
         }
-        latestAuditRows = rows.map(auditRowFromEvent);
-        filteredAuditRows = [...latestAuditRows];
-        auditPage = 1;
-        renderAuditRows(filteredAuditRows);
-      } catch (err) {
-        panel.classList.add("hidden");
+        panel.classList.remove("hidden");
+        setMessage("audit-msg", err.message || "Failed to load audit events.");
       }
     }
 
@@ -861,20 +834,52 @@
         setView("audit");
         try { await loadAuditIfAdmin(); } catch (_) {}
       });
-      $("audit-filter-form").addEventListener("submit", (e) => {
+      $("audit-filter-form").addEventListener("submit", async (e) => {
         e.preventDefault();
-        applyAuditFilters();
+        try {
+          await applyAuditFilters();
+        } catch (err) {
+          setMessage("audit-msg", err.message || "Failed to apply filters.");
+        }
       });
-      $("audit-apply").addEventListener("click", () => applyAuditFilters());
-      $("audit-reset").addEventListener("click", () => resetAuditFilters());
-      $("audit-export-csv").addEventListener("click", () => exportAuditCsv());
-      $("audit-prev").addEventListener("click", () => {
-        auditPage = Math.max(1, auditPage - 1);
-        renderAuditRows(filteredAuditRows);
+      $("audit-apply").addEventListener("click", async () => {
+        try {
+          await applyAuditFilters();
+        } catch (err) {
+          setMessage("audit-msg", err.message || "Failed to apply filters.");
+        }
       });
-      $("audit-next").addEventListener("click", () => {
+      $("audit-reset").addEventListener("click", async () => {
+        try {
+          await resetAuditFilters();
+        } catch (err) {
+          setMessage("audit-msg", err.message || "Failed to reset filters.");
+        }
+      });
+      $("audit-export-csv").addEventListener("click", async () => {
+        try {
+          await exportAuditCsv();
+        } catch (err) {
+          setMessage("audit-msg", err.message || "Audit CSV export failed.");
+        }
+      });
+      $("audit-prev").addEventListener("click", async () => {
+        if (auditPage <= 1) return;
+        auditPage -= 1;
+        try {
+          await loadAuditIfAdmin();
+        } catch (err) {
+          setMessage("audit-msg", err.message || "Failed to load audit page.");
+        }
+      });
+      $("audit-next").addEventListener("click", async () => {
+        if (auditTotalPages > 0 && auditPage >= auditTotalPages) return;
         auditPage += 1;
-        renderAuditRows(filteredAuditRows);
+        try {
+          await loadAuditIfAdmin();
+        } catch (err) {
+          setMessage("audit-msg", err.message || "Failed to load audit page.");
+        }
       });
       $("search-form").addEventListener("submit", async (e) => {
         e.preventDefault();

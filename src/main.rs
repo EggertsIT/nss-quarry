@@ -26,8 +26,8 @@ use crate::audit::AuditLogger;
 use crate::auth::{AuthManager, has_min_role};
 use crate::config::{AppConfig, AuthMode, RoleName};
 use crate::models::{
-    AuditEvent, AuthResponse, HealthResponse, LocalLoginRequest, ParquetColumnInfo, ReadyResponse,
-    SchemaFieldInfo, SchemaResponse, SearchRequest,
+    AuditEvent, AuditListResponse, AuthResponse, HealthResponse, LocalLoginRequest,
+    ParquetColumnInfo, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
 use crate::query::QueryService;
 use crate::webui::render_dashboard_html;
@@ -112,7 +112,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let cfg = Arc::new(AppConfig::load(&config_path)?);
     let auth = AuthManager::new(&cfg.auth).await?;
     let query = QueryService::new(&cfg)?;
-    let audit = AuditLogger::new(&cfg.audit.path).await?;
+    let audit = AuditLogger::new(&cfg.audit).await?;
     let state = AppState {
         cfg: Arc::clone(&cfg),
         auth,
@@ -133,6 +133,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
         .route("/api/audit", get(api_audit))
+        .route("/api/audit/export/csv", get(api_audit_export_csv))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&cfg.server.bind_addr)
@@ -522,23 +523,60 @@ fn find_first_parquet(root: &std::path::Path) -> Option<PathBuf> {
     None
 }
 
+const DEFAULT_AUDIT_PAGE_SIZE: u32 = 50;
+const MAX_AUDIT_PAGE_SIZE: u32 = 500;
+const MAX_AUDIT_EXPORT_ROWS: usize = 50_000;
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct AuditListQuery {
+    page: Option<u32>,
+    page_size: Option<u32>,
+    from: Option<chrono::DateTime<Utc>>,
+    to: Option<chrono::DateTime<Utc>>,
+    actor: Option<String>,
+    action: Option<String>,
+    outcome: Option<String>,
+    text: Option<String>,
+}
+
+impl Default for AuditListQuery {
+    fn default() -> Self {
+        Self {
+            page: Some(1),
+            page_size: Some(DEFAULT_AUDIT_PAGE_SIZE),
+            from: None,
+            to: None,
+            actor: None,
+            action: None,
+            outcome: None,
+            text: None,
+        }
+    }
+}
+
 async fn api_audit(
     State(state): State<AppState>,
     jar: CookieJar,
-) -> Result<Json<Vec<AuditEvent>>, AppError> {
+    Query(query): Query<AuditListQuery>,
+) -> Result<Json<AuditListResponse>, AppError> {
     let user = require_user(&state, &jar, RoleName::Admin).await?;
-    let text = tokio::fs::read_to_string(&state.cfg.audit.path)
-        .await
-        .map_err(AppError::internal)?;
-    let mut out = Vec::new();
-    for line in text.lines().rev().take(200) {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Ok(event) = serde_json::from_str::<AuditEvent>(line) {
-            out.push(event);
-        }
-    }
+    let page = query.page.unwrap_or(1).max(1);
+    let page_size = query
+        .page_size
+        .unwrap_or(DEFAULT_AUDIT_PAGE_SIZE)
+        .clamp(1, MAX_AUDIT_PAGE_SIZE);
+
+    let start = ((page - 1) as usize).saturating_mul(page_size as usize);
+    let (rows, total) =
+        load_paginated_audit_events(&state.cfg.audit.path, &query, start, page_size as usize)
+            .await
+            .map_err(AppError::internal)?;
+    let total_pages = if total == 0 {
+        0
+    } else {
+        ((total as u64).div_ceil(page_size as u64)) as u32
+    };
+
     state
         .audit
         .log(AuditEvent {
@@ -547,10 +585,263 @@ async fn api_audit(
             role: Some(user.role),
             action: "admin.audit.read".to_string(),
             outcome: "success".to_string(),
-            metadata: serde_json::json!({ "returned": out.len() }),
+            metadata: serde_json::json!({
+                "page": page,
+                "page_size": page_size,
+                "returned": rows.len(),
+                "total": total,
+                "filters": audit_filter_metadata(&query),
+            }),
         })
         .await;
-    Ok(Json(out))
+
+    Ok(Json(AuditListResponse {
+        rows,
+        page,
+        page_size,
+        total,
+        total_pages,
+    }))
+}
+
+async fn api_audit_export_csv(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(query): Query<AuditListQuery>,
+) -> Result<Response, AppError> {
+    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let filtered = load_filtered_audit_events(&state.cfg.audit.path, &query)
+        .await
+        .map_err(AppError::internal)?;
+    let rows = filtered
+        .into_iter()
+        .take(MAX_AUDIT_EXPORT_ROWS)
+        .collect::<Vec<_>>();
+    let csv = audit_rows_to_csv(&rows);
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.audit.export_csv".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "rows": rows.len(),
+                "bytes": csv.len(),
+                "filters": audit_filter_metadata(&query),
+            }),
+        })
+        .await;
+
+    let mut res = Response::new(csv.into());
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/csv; charset=utf-8"),
+    );
+    res.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"nss-quarry-audit.csv\""),
+    );
+    Ok(res)
+}
+
+async fn load_filtered_audit_events(
+    path: &std::path::Path,
+    query: &AuditListQuery,
+) -> Result<Vec<AuditEvent>> {
+    let files = audit_log_files(path).await?;
+    let mut out = Vec::new();
+    for file in files {
+        let text = match tokio::fs::read_to_string(&file).await {
+            Ok(t) => t,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed reading audit log {}", file.display()));
+            }
+        };
+        for line in text.lines().rev() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<AuditEvent>(line) else {
+                continue;
+            };
+            if audit_event_matches(&event, query) {
+                out.push(event);
+            }
+        }
+    }
+    Ok(out)
+}
+
+async fn load_paginated_audit_events(
+    path: &std::path::Path,
+    query: &AuditListQuery,
+    offset: usize,
+    limit: usize,
+) -> Result<(Vec<AuditEvent>, usize)> {
+    let files = audit_log_files(path).await?;
+    let mut rows = Vec::new();
+    let mut total = 0usize;
+
+    for file in files {
+        let text = match tokio::fs::read_to_string(&file).await {
+            Ok(t) => t,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed reading audit log {}", file.display()));
+            }
+        };
+        for line in text.lines().rev() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<AuditEvent>(line) else {
+                continue;
+            };
+            if !audit_event_matches(&event, query) {
+                continue;
+            }
+            if total >= offset && rows.len() < limit {
+                rows.push(event);
+            }
+            total = total.saturating_add(1);
+        }
+    }
+
+    Ok((rows, total))
+}
+
+async fn audit_log_files(path: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut files = vec![path.to_path_buf()];
+    let Some(parent) = path.parent() else {
+        return Ok(files);
+    };
+    let Some(base_name) = path.file_name().and_then(|s| s.to_str()) else {
+        return Ok(files);
+    };
+
+    let mut rotated: Vec<(u32, std::path::PathBuf)> = Vec::new();
+    let mut entries = match tokio::fs::read_dir(parent).await {
+        Ok(e) => e,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(files),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("failed reading audit dir {}", parent.display()));
+        }
+    };
+
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        let Some(suffix) = name
+            .strip_prefix(base_name)
+            .and_then(|s| s.strip_prefix('.'))
+        else {
+            continue;
+        };
+        let Ok(idx) = suffix.parse::<u32>() else {
+            continue;
+        };
+        rotated.push((idx, entry.path()));
+    }
+    rotated.sort_by_key(|(idx, _)| *idx);
+    files.extend(rotated.into_iter().map(|(_, p)| p));
+    Ok(files)
+}
+
+fn audit_event_matches(event: &AuditEvent, query: &AuditListQuery) -> bool {
+    if let Some(from) = query.from
+        && event.at < from
+    {
+        return false;
+    }
+    if let Some(to) = query.to
+        && event.at > to
+    {
+        return false;
+    }
+    if let Some(actor) = query.actor.as_deref()
+        && !contains_ci(event.actor.as_deref().unwrap_or_default(), actor)
+    {
+        return false;
+    }
+    if let Some(action) = query.action.as_deref()
+        && !contains_ci(&event.action, action)
+    {
+        return false;
+    }
+    if let Some(outcome) = query.outcome.as_deref()
+        && !contains_ci(&event.outcome, outcome)
+    {
+        return false;
+    }
+    if let Some(text) = query.text.as_deref() {
+        let haystack = format!(
+            "{} {} {} {} {} {}",
+            event.at,
+            event.actor.as_deref().unwrap_or_default(),
+            event.role.map(|r| format!("{r:?}")).unwrap_or_default(),
+            event.action,
+            event.outcome,
+            event.metadata
+        );
+        if !contains_ci(&haystack, text) {
+            return false;
+        }
+    }
+    true
+}
+
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    haystack.to_lowercase().contains(&needle.to_lowercase())
+}
+
+fn audit_filter_metadata(query: &AuditListQuery) -> serde_json::Value {
+    serde_json::json!({
+        "page": query.page,
+        "page_size": query.page_size,
+        "from": query.from,
+        "to": query.to,
+        "actor": query.actor,
+        "action": query.action,
+        "outcome": query.outcome,
+        "text": query.text,
+    })
+}
+
+fn audit_rows_to_csv(rows: &[AuditEvent]) -> String {
+    let mut out = String::new();
+    out.push_str("at,actor,role,action,outcome,metadata\n");
+    for row in rows {
+        let role = row.role.map(|r| format!("{r:?}")).unwrap_or_default();
+        let line = [
+            csv_escape_audit(&row.at.to_rfc3339()),
+            csv_escape_audit(row.actor.as_deref().unwrap_or_default()),
+            csv_escape_audit(&role),
+            csv_escape_audit(&row.action),
+            csv_escape_audit(&row.outcome),
+            csv_escape_audit(&row.metadata.to_string()),
+        ]
+        .join(",");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+fn csv_escape_audit(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
 }
 
 async fn require_user(

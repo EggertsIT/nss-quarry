@@ -102,6 +102,11 @@ cp config.example.toml config.toml
 - auth settings for the chosen mode.
 - for production OIDC with Microsoft Entra ID or Okta, follow the dedicated guide:
   - `docs/oidc-setup.md`
+- optional audit retention/rotation:
+  - `audit.path` (default `/var/lib/nss-quarry/audit.log`)
+  - `audit.retention_days` (`0` disables age-based cleanup)
+  - `audit.rotate_max_bytes` (`0` disables size-based rotation)
+  - `audit.rotate_max_files` (number of rotated files to keep when rotation is enabled)
 
 3. Validate:
 
@@ -137,7 +142,14 @@ cargo run -- run --config ./config.toml
 - `POST /api/search`
 - `POST /api/export/csv`
 - `GET /api/dashboards/{name}`
-- `GET /api/audit` (admin only)
+- `GET /api/audit` (admin only, server-side pagination and filtering)
+- `GET /api/audit/export/csv` (admin only, filter-aware export; capped to 50k rows)
+
+`/api/audit` query parameters:
+- `page` (default `1`)
+- `page_size` (default `50`, max `500`)
+- `from` / `to` (RFC3339 timestamps)
+- `actor`, `action`, `outcome`, `text` (case-insensitive contains filters)
 
 ## Security Notes
 
