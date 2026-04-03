@@ -217,7 +217,14 @@
           <div><label for="limit">Limit</label><input id="limit" type="number" min="1" max="2000" value="200"></div>
           <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
           <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
-          <div><label for="f-action">Action</label><input id="f-action" placeholder="Blocked"></div>
+          <div>
+            <label for="f-action">Action</label>
+            <select id="f-action">
+              <option value="">Any</option>
+              <option value="Allowed">Allowed</option>
+              <option value="Blocked">Blocked</option>
+            </select>
+          </div>
           <div><label for="f-threat">Threat</label><input id="f-threat" placeholder="EICAR"></div>
           <div><label for="f-category">Category</label><input id="f-category" placeholder="Spyware Callback"></div>
           <div><label for="f-ip">Source IP</label><input id="f-ip" placeholder="10.0.0.5"></div>
@@ -435,19 +442,26 @@
       return table;
     }
 
+    function normalizeFilterValue(id) {
+      const raw = $(id).value;
+      if (raw == null) return null;
+      const trimmed = String(raw).trim();
+      return trimmed.length > 0 ? trimmed : null;
+    }
+
     function buildSearchRequestFromForm() {
       const req = {
         time_from: inputToIso("time-from"),
         time_to: inputToIso("time-to"),
         filters: {
-          user: $("f-user").value || null,
-          url: $("f-url").value || null,
-          action: $("f-action").value || null,
-          threat: $("f-threat").value || null,
-          category: $("f-category").value || null,
-          source_ip: $("f-ip").value || null,
-          device: $("f-device").value || null,
-          department: $("f-dept").value || null,
+          user: normalizeFilterValue("f-user"),
+          url: normalizeFilterValue("f-url"),
+          action: normalizeFilterValue("f-action"),
+          threat: normalizeFilterValue("f-threat"),
+          category: normalizeFilterValue("f-category"),
+          source_ip: normalizeFilterValue("f-ip"),
+          device: normalizeFilterValue("f-device"),
+          department: normalizeFilterValue("f-dept"),
         },
         limit: Number.parseInt($("limit").value, 10) || 200,
       };

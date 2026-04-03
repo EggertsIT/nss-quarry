@@ -336,7 +336,8 @@ fn apply_filter(where_clauses: &mut Vec<String>, column: &str, value: Option<&st
     let Some(value) = value else {
         return;
     };
-    if value.trim().is_empty() {
+    let value = value.trim();
+    if value.is_empty() {
         return;
     }
     where_clauses.push(format!(
