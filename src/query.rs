@@ -159,7 +159,7 @@ impl QueryService {
         let device_col = ident(&self.inner.fields.device_field);
         let ip_col = ident(&self.inner.fields.source_ip_field);
         let dept_col = ident(&self.inner.fields.department_field);
-        let pattern = parquet_glob_pattern(&self.inner.parquet_root);
+        let parquet_src = parquet_source_sql(&self.inner.parquet_root);
 
         let conn = Connection::open_in_memory()?;
         let from_ts = from_24h.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -168,19 +168,19 @@ impl QueryService {
         let total = scalar_i64(
             &conn,
             &format!(
-                "SELECT COUNT(*) FROM read_parquet('{pattern}') WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}'"
+                "SELECT COUNT(*) FROM {parquet_src} WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}'"
             ),
         )?;
         let blocked = scalar_i64(
             &conn,
             &format!(
-                "SELECT COUNT(*) FROM read_parquet('{pattern}') WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}' AND CAST({action_col} AS VARCHAR) = 'Blocked'"
+                "SELECT COUNT(*) FROM {parquet_src} WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}' AND CAST({action_col} AS VARCHAR) = 'Blocked'"
             ),
         )?;
         let threats = scalar_i64(
             &conn,
             &format!(
-                "SELECT COUNT(*) FROM read_parquet('{pattern}') WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}' AND COALESCE(CAST({threat_col} AS VARCHAR),'') NOT IN ('', 'None', 'N/A')"
+                "SELECT COUNT(*) FROM {parquet_src} WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}' AND COALESCE(CAST({threat_col} AS VARCHAR),'') NOT IN ('', 'None', 'N/A')"
             ),
         )?;
 
@@ -193,7 +193,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    pattern: &pattern,
+                    parquet_src: &parquet_src,
                     limit: 10,
                 },
             )?,
@@ -205,7 +205,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    pattern: &pattern,
+                    parquet_src: &parquet_src,
                     limit: 10,
                 },
             )?,
@@ -217,7 +217,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    pattern: &pattern,
+                    parquet_src: &parquet_src,
                     limit: 10,
                 },
             )?,
@@ -229,7 +229,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    pattern: &pattern,
+                    parquet_src: &parquet_src,
                     limit: 10,
                 },
             )?,
@@ -241,7 +241,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    pattern: &pattern,
+                    parquet_src: &parquet_src,
                     limit: 10,
                 },
             )?,
@@ -290,18 +290,18 @@ struct TopNArgs<'a> {
     time_col: &'a str,
     from_ts: &'a str,
     to_ts: &'a str,
-    pattern: &'a str,
+    parquet_src: &'a str,
     limit: u32,
 }
 
 fn top_n(conn: &Connection, args: TopNArgs<'_>) -> Result<TableBlock> {
     let sql = format!(
         "SELECT COALESCE(CAST({field_col} AS VARCHAR), 'None') AS value, COUNT(*) AS cnt \
-         FROM read_parquet('{pattern}') \
+         FROM {parquet_src} \
          WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}' \
          GROUP BY 1 ORDER BY 2 DESC LIMIT {limit}",
         field_col = args.field_col,
-        pattern = args.pattern,
+        parquet_src = args.parquet_src,
         time_col = args.time_col,
         from_ts = args.from_ts,
         to_ts = args.to_ts,
@@ -418,10 +418,12 @@ fn build_search_sql(
         req.filters.department.as_deref(),
     );
 
+    let parquet_src = parquet_source_sql(parquet_root);
+
     format!(
-        "SELECT {select_list} FROM read_parquet('{pattern}') WHERE {} ORDER BY {time_col} DESC LIMIT {limit}",
+        "SELECT {select_list} FROM {parquet_src} WHERE {} ORDER BY {time_col} DESC LIMIT {limit}",
         where_clauses.join(" AND "),
-        pattern = parquet_glob_pattern(parquet_root)
+        parquet_src = parquet_src
     )
 }
 
@@ -527,6 +529,11 @@ fn parquet_glob_pattern(root: &Path) -> String {
     raw.replace('\'', "''")
 }
 
+fn parquet_source_sql(root: &Path) -> String {
+    let pattern = parquet_glob_pattern(root);
+    format!("read_parquet('{pattern}', union_by_name=true)")
+}
+
 fn validate_identifier(name: &str) -> Result<()> {
     let re = Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$").expect("valid regex");
     if re.is_match(name) {
@@ -610,7 +617,7 @@ mod tests {
         assert!(sql.contains(
             "SELECT CAST(\"time\" AS VARCHAR) AS \"time\", CAST(\"eurl\" AS VARCHAR) AS \"eurl\""
         ));
-        assert!(sql.contains("read_parquet('/tmp/o''hare/dt=*/hour=*/*.parquet')"));
+        assert!(sql.contains("read_parquet('/tmp/o''hare/dt=*/hour=*/*.parquet', union_by_name=true)"));
         assert!(sql.contains("ORDER BY \"time\" DESC LIMIT 123"));
 
         let escaped_url = escape_like("exa%m_ple'\\path");
