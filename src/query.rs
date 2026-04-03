@@ -347,6 +347,29 @@ fn apply_filter(where_clauses: &mut Vec<String>, column: &str, value: Option<&st
     ));
 }
 
+fn apply_multi_exact_filter(where_clauses: &mut Vec<String>, column: &str, value: Option<&str>) {
+    let Some(value) = value else {
+        return;
+    };
+    let values = split_csv_values(value);
+    if values.is_empty() {
+        return;
+    }
+
+    let predicates = values
+        .iter()
+        .map(|v| {
+            format!(
+                "LOWER(CAST({} AS VARCHAR)) = LOWER('{}')",
+                ident(column),
+                escape_sql_literal(v)
+            )
+        })
+        .collect::<Vec<_>>();
+
+    where_clauses.push(format!("({})", predicates.join(" OR ")));
+}
+
 fn build_search_sql(
     columns: &[String],
     req: &SearchRequest,
@@ -404,7 +427,7 @@ fn build_search_sql(
         &fields.source_ip_field,
         req.filters.source_ip.as_deref(),
     );
-    apply_filter(
+    apply_multi_exact_filter(
         &mut where_clauses,
         &fields.server_ip_field,
         req.filters.server_ip.as_deref(),
@@ -431,6 +454,15 @@ fn build_search_sql(
 
 fn escape_sql_literal(value: &str) -> String {
     value.replace('\'', "''")
+}
+
+fn split_csv_values(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn rows_to_csv(rows: &[serde_json::Map<String, serde_json::Value>]) -> String {
@@ -502,23 +534,32 @@ fn validate_time_window(from: DateTime<Utc>, to: DateTime<Utc>, max_days: i64) -
 }
 
 fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
-    for value in [
-        filters.user.as_deref(),
-        filters.url.as_deref(),
-        filters.action.as_deref(),
-        filters.threat.as_deref(),
-        filters.category.as_deref(),
-        filters.source_ip.as_deref(),
-        filters.server_ip.as_deref(),
-        filters.device.as_deref(),
-        filters.department.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if !re.is_match(value) {
-            anyhow::bail!("filter value contains disallowed characters");
+    validate_filter_value(filters.user.as_deref(), re, false)?;
+    validate_filter_value(filters.url.as_deref(), re, false)?;
+    validate_filter_value(filters.action.as_deref(), re, false)?;
+    validate_filter_value(filters.threat.as_deref(), re, false)?;
+    validate_filter_value(filters.category.as_deref(), re, false)?;
+    validate_filter_value(filters.source_ip.as_deref(), re, false)?;
+    validate_filter_value(filters.server_ip.as_deref(), re, true)?;
+    validate_filter_value(filters.device.as_deref(), re, false)?;
+    validate_filter_value(filters.department.as_deref(), re, false)?;
+    Ok(())
+}
+
+fn validate_filter_value(value: Option<&str>, re: &Regex, allow_csv: bool) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if allow_csv {
+        for part in split_csv_values(value) {
+            if !re.is_match(&part) {
+                anyhow::bail!("filter value contains disallowed characters");
+            }
         }
+        return Ok(());
+    }
+    if !re.is_match(value) {
+        anyhow::bail!("filter value contains disallowed characters");
     }
     Ok(())
 }
@@ -627,5 +668,26 @@ mod tests {
             "STRPOS(LOWER(CAST(\"eurl\" AS VARCHAR)), LOWER('{}')) > 0",
             escaped_url
         )));
+    }
+
+    #[test]
+    fn build_search_sql_supports_multiple_server_ips() {
+        let req = SearchRequest {
+            time_from: Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap(),
+            time_to: Utc.with_ymd_and_hms(2026, 4, 1, 1, 0, 0).unwrap(),
+            filters: SearchFilters {
+                server_ip: Some("1.1.1.1, 8.8.8.8".to_string()),
+                ..SearchFilters::default()
+            },
+            limit: Some(50),
+            columns: Some(vec!["time".to_string(), "sip".to_string()]),
+        };
+        let columns = req.columns.clone().expect("columns");
+        let fields = FieldMap::default();
+        let sql = build_search_sql(&columns, &req, &fields, Path::new("/tmp"), 50);
+
+        assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('1.1.1.1')"));
+        assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('8.8.8.8')"));
+        assert!(sql.contains(" OR "));
     }
 }
