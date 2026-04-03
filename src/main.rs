@@ -5,6 +5,7 @@ mod models;
 mod query;
 mod webui;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -18,14 +19,15 @@ use axum::{Json, Router};
 use axum_extra::extract::CookieJar;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
+use duckdb::Connection;
 use tracing::{error, info};
 
 use crate::audit::AuditLogger;
 use crate::auth::{AuthManager, has_min_role};
 use crate::config::{AppConfig, AuthMode, RoleName};
 use crate::models::{
-    AuditEvent, AuthResponse, HealthResponse, LocalLoginRequest, ReadyResponse, SchemaFieldInfo,
-    SchemaResponse, SearchRequest,
+    AuditEvent, AuthResponse, HealthResponse, LocalLoginRequest, ParquetColumnInfo, ReadyResponse,
+    SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
 use crate::query::QueryService;
 use crate::webui::render_dashboard_html;
@@ -410,6 +412,11 @@ async fn api_schema(
             mapped_from: state.cfg.data.fields.department_field.clone(),
         },
     ];
+    let parquet_root = state.cfg.data.parquet_root.clone();
+    let (parquet_columns, parquet_schema_error) =
+        tokio::task::spawn_blocking(move || detect_parquet_columns(&parquet_root))
+            .await
+            .map_err(AppError::internal)?;
 
     let auth_mode = match state.cfg.auth.mode {
         AuthMode::OidcEntra => "oidc_entra",
@@ -419,10 +426,100 @@ async fn api_schema(
     Ok(Json(SchemaResponse {
         auth_mode: auth_mode.to_string(),
         fields,
+        parquet_columns,
+        parquet_schema_error,
         default_columns: state.cfg.query.default_columns.clone(),
         helpdesk_mask_fields: state.cfg.security.helpdesk_mask_fields.clone(),
         generated_at: Utc::now(),
     }))
+}
+
+fn detect_parquet_columns(root: &std::path::Path) -> (Vec<ParquetColumnInfo>, Option<String>) {
+    let Some(sample_file) = find_first_parquet(root) else {
+        return (
+            Vec::new(),
+            Some(format!("No parquet file found under {}", root.display())),
+        );
+    };
+
+    let conn = match Connection::open_in_memory() {
+        Ok(c) => c,
+        Err(err) => {
+            return (Vec::new(), Some(format!("duckdb open failed: {err}")));
+        }
+    };
+
+    let sample_file_sql = sample_file.display().to_string().replace('\'', "''");
+    let sql =
+        format!("DESCRIBE SELECT * FROM read_parquet('{sample_file_sql}', union_by_name=true)");
+
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(err) => {
+            return (
+                Vec::new(),
+                Some(format!(
+                    "failed to inspect parquet schema from {}: {err}",
+                    sample_file.display()
+                )),
+            );
+        }
+    };
+
+    let mut rows = match stmt.query([]) {
+        Ok(r) => r,
+        Err(err) => {
+            return (
+                Vec::new(),
+                Some(format!(
+                    "failed to query parquet schema from {}: {err}",
+                    sample_file.display()
+                )),
+            );
+        }
+    };
+
+    let mut cols = Vec::new();
+    while let Ok(Some(row)) = rows.next() {
+        let name: Option<String> = row.get(0).ok();
+        let data_type: Option<String> = row.get(1).ok();
+        if let (Some(name), Some(data_type)) = (name, data_type) {
+            cols.push(ParquetColumnInfo { name, data_type });
+        }
+    }
+
+    (cols, None)
+}
+
+fn find_first_parquet(root: &std::path::Path) -> Option<PathBuf> {
+    if !root.exists() {
+        return None;
+    }
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(path) = stack.pop() {
+        let entries = match std::fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let file_type = match entry.file_type() {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if file_type.is_file()
+                && entry
+                    .path()
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("parquet"))
+            {
+                return Some(entry.path());
+            }
+        }
+    }
+    None
 }
 
 async fn api_audit(

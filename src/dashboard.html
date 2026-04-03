@@ -529,8 +529,33 @@
       const schema = await apiFetch("/api/schema", { method: "GET" });
       const host = $("schema-view");
       host.innerHTML = "";
-      const rows = (schema.fields || []).map(f => [f.name, f.mapped_from]);
-      host.appendChild(buildTable(["column", "source_field"], rows));
+
+      const parquetCols = schema.parquet_columns || [];
+      const parquetSet = new Set(parquetCols.map(c => c.name));
+      const mappingRows = (schema.fields || []).map(f => [
+        f.name,
+        f.mapped_from,
+        parquetSet.has(f.mapped_from) ? "present" : "missing"
+      ]);
+      host.appendChild(buildTable(["mapping_key", "mapped_column", "status"], mappingRows));
+
+      const parquetTitle = document.createElement("div");
+      parquetTitle.className = "muted";
+      parquetTitle.style.marginTop = "10px";
+      parquetTitle.textContent = "Detected Parquet Columns:";
+      host.appendChild(parquetTitle);
+
+      const parquetRows = parquetCols.map(c => [c.name, c.data_type]);
+      if (parquetRows.length > 0) {
+        host.appendChild(buildTable(["column", "type"], parquetRows));
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.style.marginTop = "6px";
+        empty.textContent = schema.parquet_schema_error || "No parquet schema detected.";
+        host.appendChild(empty);
+      }
+
       const details = document.createElement("div");
       details.className = "muted";
       details.style.marginTop = "8px";

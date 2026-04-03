@@ -65,9 +65,17 @@ pub struct SchemaFieldInfo {
 }
 
 #[derive(Debug, Serialize)]
+pub struct ParquetColumnInfo {
+    pub name: String,
+    pub data_type: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct SchemaResponse {
     pub auth_mode: String,
     pub fields: Vec<SchemaFieldInfo>,
+    pub parquet_columns: Vec<ParquetColumnInfo>,
+    pub parquet_schema_error: Option<String>,
     pub default_columns: Vec<String>,
     pub helpdesk_mask_fields: Vec<String>,
     pub generated_at: DateTime<Utc>,
