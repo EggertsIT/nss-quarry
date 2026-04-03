@@ -38,6 +38,7 @@ pub struct SearchFilters {
     pub action: Option<String>,
     pub threat: Option<String>,
     pub category: Option<String>,
+    #[serde(alias = "cip")]
     pub source_ip: Option<String>,
     pub device: Option<String>,
     pub department: Option<String>,
