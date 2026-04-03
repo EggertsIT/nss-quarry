@@ -1,0 +1,10 @@
+/target
+.DS_Store
+config.toml
+.env
+.env.*
+*.log
+*.pem
+*.key
+.idea/
+.vscode/

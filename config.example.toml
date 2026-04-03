@@ -1,0 +1,56 @@
+[server]
+bind_addr = "127.0.0.1:9191"
+
+[data]
+parquet_root = "/var/lib/nss-ingestor/data"
+
+[data.fields]
+time_field = "time"
+user_field = "ologin"
+url_field = "eurl"
+action_field = "action"
+threat_field = "threatname"
+category_field = "urlcat"
+source_ip_field = "cip"
+device_field = "devicehostname"
+department_field = "dept"
+
+[auth]
+mode = "local_users" # local_users | oidc_entra | oidc_okta
+cookie_name = "nssq_session"
+session_ttl_minutes = 60
+secure_cookie = true # set false only for local HTTP lab/testing
+
+[auth.oidc]
+issuer_url = "https://login.microsoftonline.com/<tenant-id>/v2.0"
+client_id = ""
+client_secret = ""
+redirect_url = "https://nss-quarry.example.com/auth/callback"
+scopes = ["openid", "profile", "email"]
+claim_username = "preferred_username"
+claim_groups = "groups"
+
+[auth.oidc.role_map]
+helpdesk_groups = ["nss-helpdesk"]
+analyst_groups = ["nss-analyst"]
+admin_groups = ["nss-admin"]
+
+[[auth.local_users.users]]
+username = "admin"
+password_hash = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$REPLACE"
+role = "admin"
+disabled = false
+
+[security]
+helpdesk_mask_fields = ["ologin", "cip", "devicehostname"]
+input_value_regex = "^[A-Za-z0-9@\\._:/\\-\\s]{1,256}$"
+
+[query]
+max_days_per_query = 7
+default_limit = 200
+max_rows = 2000
+timeout_ms = 10000
+default_columns = ["time", "action", "eurl", "ologin", "cip", "urlcat", "threatname", "rulelabel"]
+
+[audit]
+path = "/var/lib/nss-quarry/audit.log"
