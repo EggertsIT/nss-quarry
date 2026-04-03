@@ -114,11 +114,7 @@ impl QueryService {
 
         let conn = Connection::open_in_memory()?;
         let mut stmt = conn.prepare(&sql)?;
-        let col_names = stmt
-            .column_names()
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
+        let col_names = columns;
         let mut rows = stmt.query([])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
