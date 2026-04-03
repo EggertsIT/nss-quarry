@@ -278,6 +278,33 @@
 
       <div class="panel hidden" id="view-audit" style="margin-top: 14px;">
         <h3>Recent Audit Events (Admin)</h3>
+        <form id="audit-filter-form" class="form-grid" style="margin-bottom: 8px;">
+          <div><label for="audit-from">From</label><input id="audit-from" type="datetime-local"></div>
+          <div><label for="audit-to">To</label><input id="audit-to" type="datetime-local"></div>
+          <div><label for="audit-actor">Actor</label><input id="audit-actor" placeholder="admin"></div>
+          <div><label for="audit-action">Action</label><input id="audit-action" placeholder="query.search"></div>
+          <div><label for="audit-outcome">Outcome</label><input id="audit-outcome" placeholder="success"></div>
+          <div><label for="audit-text">Contains Text</label><input id="audit-text" placeholder="sip=20.242.181.0"></div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="audit-apply" type="button" class="primary">Apply Filters</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="audit-reset" type="button" class="ghost">Reset</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="audit-export-csv" type="button" class="ghost">Export Audit CSV</button>
+          </div>
+        </form>
+        <div id="audit-meta" class="muted" style="margin-bottom: 8px;"></div>
+        <div class="toolbar" style="margin-bottom: 8px;">
+          <button id="audit-prev" type="button" class="ghost">Prev</button>
+          <button id="audit-next" type="button" class="ghost">Next</button>
+          <div id="audit-page" class="muted"></div>
+        </div>
+        <div id="audit-msg" class="message"></div>
         <div id="audit-view" class="table-wrap"></div>
       </div>
     </section>
@@ -289,6 +316,10 @@
     let latestSearchRequest = null;
     let latestSchema = null;
     let activeView = "main";
+    let latestAuditRows = [];
+    let filteredAuditRows = [];
+    let auditPage = 1;
+    const auditPageSize = 50;
 
     function $(id) { return document.getElementById(id); }
 
@@ -509,6 +540,124 @@
       }
     }
 
+    function auditRowFromEvent(r) {
+      return {
+        at: r.at || "",
+        actor: r.actor || "",
+        role: r.role || "",
+        action: r.action || "",
+        outcome: r.outcome || "",
+        metadata: formatAuditMetadata(r.metadata),
+      };
+    }
+
+    function renderAuditRows(rows) {
+      const host = $("audit-view");
+      host.innerHTML = "";
+      if (!rows || rows.length === 0) {
+        host.innerHTML = "<div class='muted' style='padding:10px;'>No audit events match current filters.</div>";
+        $("audit-meta").textContent = "Rows: 0";
+        $("audit-page").textContent = "Page 0/0";
+        $("audit-prev").disabled = true;
+        $("audit-next").disabled = true;
+        return;
+      }
+      const totalPages = Math.max(1, Math.ceil(rows.length / auditPageSize));
+      if (auditPage > totalPages) auditPage = totalPages;
+      if (auditPage < 1) auditPage = 1;
+      const start = (auditPage - 1) * auditPageSize;
+      const pageRows = rows.slice(start, start + auditPageSize);
+
+      const data = pageRows.map(r => [r.at, r.actor, r.role, r.action, r.outcome, r.metadata]);
+      host.appendChild(buildTable(["at", "actor", "role", "action", "outcome", "metadata"], data));
+      $("audit-meta").textContent = `Rows: ${rows.length}`;
+      $("audit-page").textContent = `Page ${auditPage}/${totalPages} (showing ${pageRows.length} of ${rows.length})`;
+      $("audit-prev").disabled = auditPage <= 1;
+      $("audit-next").disabled = auditPage >= totalPages;
+    }
+
+    function applyAuditFilters() {
+      const fromIso = inputToIso("audit-from");
+      const toIso = inputToIso("audit-to");
+      const actor = normalizeFilterValue("audit-actor");
+      const action = normalizeFilterValue("audit-action");
+      const outcome = normalizeFilterValue("audit-outcome");
+      const text = normalizeFilterValue("audit-text");
+
+      const actorLc = actor ? actor.toLowerCase() : null;
+      const actionLc = action ? action.toLowerCase() : null;
+      const outcomeLc = outcome ? outcome.toLowerCase() : null;
+      const textLc = text ? text.toLowerCase() : null;
+      const fromTs = fromIso ? Date.parse(fromIso) : null;
+      const toTs = toIso ? Date.parse(toIso) : null;
+
+      filteredAuditRows = latestAuditRows.filter(r => {
+        const atTs = Date.parse(r.at);
+        if (fromTs != null && Number.isFinite(atTs) && atTs < fromTs) return false;
+        if (toTs != null && Number.isFinite(atTs) && atTs > toTs) return false;
+        if (actorLc && !String(r.actor).toLowerCase().includes(actorLc)) return false;
+        if (actionLc && !String(r.action).toLowerCase().includes(actionLc)) return false;
+        if (outcomeLc && !String(r.outcome).toLowerCase().includes(outcomeLc)) return false;
+        if (textLc) {
+          const hay = `${r.at} ${r.actor} ${r.role} ${r.action} ${r.outcome} ${r.metadata}`.toLowerCase();
+          if (!hay.includes(textLc)) return false;
+        }
+        return true;
+      });
+      auditPage = 1;
+      renderAuditRows(filteredAuditRows);
+      setMessage("audit-msg", "", true);
+    }
+
+    function resetAuditFilters() {
+      $("audit-from").value = "";
+      $("audit-to").value = "";
+      $("audit-actor").value = "";
+      $("audit-action").value = "";
+      $("audit-outcome").value = "";
+      $("audit-text").value = "";
+      filteredAuditRows = [...latestAuditRows];
+      auditPage = 1;
+      renderAuditRows(filteredAuditRows);
+      setMessage("audit-msg", "Audit filters reset.", true);
+    }
+
+    function csvEscape(value) {
+      const s = value == null ? "" : String(value);
+      if (s.includes(",") || s.includes("\"") || s.includes("\n")) {
+        return `"${s.replace(/"/g, "\"\"")}"`;
+      }
+      return s;
+    }
+
+    function exportAuditCsv() {
+      const rows = filteredAuditRows || [];
+      if (rows.length === 0) {
+        setMessage("audit-msg", "No audit rows to export.");
+        return;
+      }
+      const headers = ["at", "actor", "role", "action", "outcome", "metadata"];
+      const lines = [headers.join(",")];
+      for (const r of rows) {
+        lines.push([
+          csvEscape(r.at),
+          csvEscape(r.actor),
+          csvEscape(r.role),
+          csvEscape(r.action),
+          csvEscape(r.outcome),
+          csvEscape(r.metadata),
+        ].join(","));
+      }
+      const blob = new Blob([lines.join("\n") + "\n"], { type: "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "nss-quarry-audit.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+      setMessage("audit-msg", "Audit CSV export downloaded.", true);
+    }
+
     function normalizeFilterValue(id) {
       const raw = $(id).value;
       if (raw == null) return null;
@@ -641,24 +790,20 @@
 
     async function loadAuditIfAdmin() {
       const panel = $("view-audit");
-      const host = $("audit-view");
       try {
         const rows = await apiFetch("/api/audit", { method: "GET" });
         panel.classList.remove("hidden");
         if (!rows || rows.length === 0) {
-          host.innerHTML = "<div class='muted' style='padding:10px;'>No audit events.</div>";
+          latestAuditRows = [];
+          filteredAuditRows = [];
+          auditPage = 1;
+          renderAuditRows(filteredAuditRows);
           return;
         }
-        const data = rows.map(r => [
-          r.at || "",
-          r.actor || "",
-          r.role || "",
-          r.action || "",
-          r.outcome || "",
-          formatAuditMetadata(r.metadata)
-        ]);
-        host.innerHTML = "";
-        host.appendChild(buildTable(["at", "actor", "role", "action", "outcome", "metadata"], data));
+        latestAuditRows = rows.map(auditRowFromEvent);
+        filteredAuditRows = [...latestAuditRows];
+        auditPage = 1;
+        renderAuditRows(filteredAuditRows);
       } catch (err) {
         panel.classList.add("hidden");
       }
@@ -715,6 +860,21 @@
       $("menu-audit").addEventListener("click", async () => {
         setView("audit");
         try { await loadAuditIfAdmin(); } catch (_) {}
+      });
+      $("audit-filter-form").addEventListener("submit", (e) => {
+        e.preventDefault();
+        applyAuditFilters();
+      });
+      $("audit-apply").addEventListener("click", () => applyAuditFilters());
+      $("audit-reset").addEventListener("click", () => resetAuditFilters());
+      $("audit-export-csv").addEventListener("click", () => exportAuditCsv());
+      $("audit-prev").addEventListener("click", () => {
+        auditPage = Math.max(1, auditPage - 1);
+        renderAuditRows(filteredAuditRows);
+      });
+      $("audit-next").addEventListener("click", () => {
+        auditPage += 1;
+        renderAuditRows(filteredAuditRows);
       });
       $("search-form").addEventListener("submit", async (e) => {
         e.preventDefault();
