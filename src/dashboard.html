@@ -271,6 +271,7 @@
     const AUTH_MODE = "__AUTH_MODE__";
     let currentUser = null;
     let latestSearchRequest = null;
+    let latestSchema = null;
 
     function $(id) { return document.getElementById(id); }
 
@@ -468,6 +469,13 @@
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
         req.columns = rawCols.split(",").map(v => v.trim()).filter(v => v.length > 0);
+      } else if (latestSchema && Array.isArray(latestSchema.parquet_columns)) {
+        const cols = latestSchema.parquet_columns
+          .map(c => c && c.name ? String(c.name).trim() : "")
+          .filter(c => c.length > 0);
+        if (cols.length > 0) {
+          req.columns = cols;
+        }
       }
       latestSearchRequest = req;
       return req;
@@ -527,6 +535,7 @@
 
     async function loadSchema() {
       const schema = await apiFetch("/api/schema", { method: "GET" });
+      latestSchema = schema;
       const host = $("schema-view");
       host.innerHTML = "";
 
@@ -588,7 +597,8 @@
     }
 
     async function refreshAll() {
-      await Promise.all([loadDashboard(), loadSchema(), runSearch(), loadAuditIfAdmin()]);
+      await loadSchema();
+      await Promise.all([loadDashboard(), runSearch(), loadAuditIfAdmin()]);
     }
 
     async function onLocalLogin(e) {
