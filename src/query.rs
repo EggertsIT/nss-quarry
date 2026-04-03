@@ -341,9 +341,9 @@ fn apply_filter(where_clauses: &mut Vec<String>, column: &str, value: Option<&st
         return;
     }
     where_clauses.push(format!(
-        "CAST({} AS VARCHAR) ILIKE '%{}%' ESCAPE '\\\\'",
+        "STRPOS(LOWER(CAST({} AS VARCHAR)), LOWER('{}')) > 0",
         ident(column),
-        escape_like(value)
+        escape_sql_literal(value)
     ));
 }
 
@@ -424,12 +424,8 @@ fn build_search_sql(
     )
 }
 
-fn escape_like(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-        .replace('\'', "''")
+fn escape_sql_literal(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn rows_to_csv(rows: &[serde_json::Map<String, serde_json::Value>]) -> String {
@@ -617,10 +613,10 @@ mod tests {
         assert!(sql.contains("read_parquet('/tmp/o''hare/dt=*/hour=*/*.parquet', union_by_name=true)"));
         assert!(sql.contains("ORDER BY \"time\" DESC LIMIT 123"));
 
-        let escaped_url = escape_like("exa%m_ple'\\path");
-        assert!(sql.contains("CAST(\"ologin\" AS VARCHAR) ILIKE '%alice%' ESCAPE '\\\\'"));
+        let escaped_url = escape_sql_literal("exa%m_ple'\\path");
+        assert!(sql.contains("STRPOS(LOWER(CAST(\"ologin\" AS VARCHAR)), LOWER('alice')) > 0"));
         assert!(sql.contains(&format!(
-            "CAST(\"eurl\" AS VARCHAR) ILIKE '%{}%' ESCAPE '\\\\'",
+            "STRPOS(LOWER(CAST(\"eurl\" AS VARCHAR)), LOWER('{}')) > 0",
             escaped_url
         )));
     }
