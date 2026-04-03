@@ -610,7 +610,9 @@ mod tests {
         assert!(sql.contains(
             "SELECT CAST(\"time\" AS VARCHAR) AS \"time\", CAST(\"eurl\" AS VARCHAR) AS \"eurl\""
         ));
-        assert!(sql.contains("read_parquet('/tmp/o''hare/dt=*/hour=*/*.parquet', union_by_name=true)"));
+        assert!(
+            sql.contains("read_parquet('/tmp/o''hare/dt=*/hour=*/*.parquet', union_by_name=true)")
+        );
         assert!(sql.contains("ORDER BY \"time\" DESC LIMIT 123"));
 
         let escaped_url = escape_sql_literal("exa%m_ple'\\path");
