@@ -59,6 +59,21 @@ pub struct DashboardResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct SchemaFieldInfo {
+    pub name: String,
+    pub mapped_from: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SchemaResponse {
+    pub auth_mode: String,
+    pub fields: Vec<SchemaFieldInfo>,
+    pub default_columns: Vec<String>,
+    pub helpdesk_mask_fields: Vec<String>,
+    pub generated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct MetricCard {
     pub name: String,
     pub value: i64,

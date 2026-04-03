@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod models;
 mod query;
+mod webui;
 
 use std::sync::Arc;
 
@@ -11,7 +12,7 @@ use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
-use axum::response::{IntoResponse, Redirect, Response};
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::CookieJar;
@@ -23,9 +24,11 @@ use crate::audit::AuditLogger;
 use crate::auth::{AuthManager, has_min_role};
 use crate::config::{AppConfig, AuthMode, RoleName};
 use crate::models::{
-    AuditEvent, AuthResponse, HealthResponse, LocalLoginRequest, ReadyResponse, SearchRequest,
+    AuditEvent, AuthResponse, HealthResponse, LocalLoginRequest, ReadyResponse, SchemaFieldInfo,
+    SchemaResponse, SearchRequest,
 };
 use crate::query::QueryService;
+use crate::webui::render_dashboard_html;
 
 #[derive(Parser, Debug)]
 #[command(name = "nss-quarry")]
@@ -118,7 +121,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let app = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/dashboard", get(dashboard_placeholder))
+        .route("/dashboard", get(dashboard_page))
         .route("/auth/login", get(auth_login_oidc).post(auth_login_local))
         .route("/auth/callback", get(auth_callback_oidc))
         .route("/auth/logout", post(auth_logout))
@@ -126,6 +129,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         .route("/api/search", post(api_search))
         .route("/api/export/csv", post(api_export_csv))
         .route("/api/dashboards/:name", get(api_dashboard))
+        .route("/api/schema", get(api_schema))
         .route("/api/audit", get(api_audit))
         .with_state(state);
 
@@ -167,8 +171,8 @@ async fn readyz(State(state): State<AppState>) -> Response {
     }
 }
 
-async fn dashboard_placeholder() -> &'static str {
-    "nss-quarry is running. Use /api/dashboards/{name} and /api/search."
+async fn dashboard_page(State(state): State<AppState>) -> Html<String> {
+    Html(render_dashboard_html(state.cfg.auth.mode))
 }
 
 async fn auth_login_local(
@@ -361,6 +365,64 @@ async fn api_dashboard(
         })
         .await;
     Ok(Json(data))
+}
+
+async fn api_schema(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<SchemaResponse>, AppError> {
+    let _user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let fields = vec![
+        SchemaFieldInfo {
+            name: "time_field".to_string(),
+            mapped_from: state.cfg.data.fields.time_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "user_field".to_string(),
+            mapped_from: state.cfg.data.fields.user_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "url_field".to_string(),
+            mapped_from: state.cfg.data.fields.url_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "action_field".to_string(),
+            mapped_from: state.cfg.data.fields.action_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "threat_field".to_string(),
+            mapped_from: state.cfg.data.fields.threat_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "category_field".to_string(),
+            mapped_from: state.cfg.data.fields.category_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "source_ip_field".to_string(),
+            mapped_from: state.cfg.data.fields.source_ip_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "device_field".to_string(),
+            mapped_from: state.cfg.data.fields.device_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "department_field".to_string(),
+            mapped_from: state.cfg.data.fields.department_field.clone(),
+        },
+    ];
+
+    let auth_mode = match state.cfg.auth.mode {
+        AuthMode::OidcEntra => "oidc_entra",
+        AuthMode::OidcOkta => "oidc_okta",
+        AuthMode::LocalUsers => "local_users",
+    };
+    Ok(Json(SchemaResponse {
+        auth_mode: auth_mode.to_string(),
+        fields,
+        default_columns: state.cfg.query.default_columns.clone(),
+        helpdesk_mask_fields: state.cfg.security.helpdesk_mask_fields.clone(),
+        generated_at: Utc::now(),
+    }))
 }
 
 async fn api_audit(

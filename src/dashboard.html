@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSS Quarry Dashboard</title>
+  <style>
+    :root {
+      --bg: #edf2f8;
+      --panel: rgba(255, 255, 255, 0.62);
+      --ink: #0f1f33;
+      --muted: #566379;
+      --line: rgba(175, 196, 223, 0.55);
+      --accent: #1572d6;
+      --accent-soft: rgba(177, 216, 255, 0.35);
+      --warn: #b45309;
+      --ok: #15803d;
+      --danger: #b91c1c;
+      --glass-shadow: 0 10px 30px rgba(26, 59, 110, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Display", "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1400px 700px at 120% -20%, #c8ddff 0%, transparent 60%),
+        radial-gradient(1100px 650px at -10% 5%, #d7f2ff 0%, transparent 58%),
+        linear-gradient(180deg, #f7faff 0%, #e9eff8 100%);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1320px; margin: 0 auto; padding: 20px; }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 14px;
+    }
+    h1 { margin: 0; font-size: 1.8rem; letter-spacing: 0.2px; }
+    .sub { color: var(--muted); font-size: 0.95rem; margin-top: 4px; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 6px 10px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+    .grid { display: grid; gap: 14px; }
+    .cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+    .two { grid-template-columns: 1.6fr 1fr; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+      backdrop-filter: blur(18px) saturate(135%);
+      -webkit-backdrop-filter: blur(18px) saturate(135%);
+      box-shadow: var(--glass-shadow);
+    }
+    .panel h2, .panel h3 { margin: 0 0 10px 0; font-size: 1rem; }
+    .metric {
+      background:
+        linear-gradient(150deg, rgba(255, 255, 255, 0.78), rgba(244, 250, 255, 0.56)),
+        radial-gradient(220px 130px at 100% -10%, rgba(58, 137, 255, 0.14), transparent 70%);
+    }
+    .metric .k { font-size: 1.45rem; font-weight: 700; }
+    .metric .n { color: var(--muted); font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .toolbar .spacer { flex: 1 1 auto; }
+    label { font-size: 0.82rem; color: var(--muted); display: block; margin-bottom: 4px; }
+    input, select, button, textarea {
+      font: inherit;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 8px 11px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--ink);
+    }
+    input, select { width: 100%; }
+    button {
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+    button.primary {
+      background: linear-gradient(140deg, #1e80e2, #1470d0);
+      border-color: #186cc2;
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(25, 113, 214, 0.26);
+    }
+    button.primary:hover { transform: translateY(-1px); box-shadow: 0 10px 20px rgba(25, 113, 214, 0.3); }
+    button.ghost:hover { background: rgba(255, 255, 255, 0.9); }
+    .form-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      align-items: end;
+    }
+    .message { margin: 8px 0 0 0; color: var(--danger); font-size: 0.9rem; min-height: 1.3em; }
+    .ok-msg { color: var(--ok); }
+    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; vertical-align: top; }
+    th { background: rgba(244, 249, 255, 0.92); color: #2b3a4a; position: sticky; top: 0; z-index: 1; }
+    tr:last-child td { border-bottom: 0; }
+    .chart {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 220px;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) 5fr auto;
+      gap: 8px;
+      align-items: center;
+      font-size: 0.84rem;
+    }
+    .bar {
+      background: rgba(221, 233, 248, 0.92);
+      border-radius: 8px;
+      overflow: hidden;
+      height: 14px;
+    }
+    .bar > span {
+      display: block;
+      height: 100%;
+      background: linear-gradient(90deg, #1d81e6, #3b9cff);
+    }
+    .muted { color: var(--muted); }
+    .hidden { display: none !important; }
+    #auth-panel { max-width: 540px; margin: 24px auto 0; }
+    .auth-mode {
+      font-size: 0.82rem;
+      color: var(--muted);
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(152, 195, 247, 0.75);
+      display: inline-block;
+    }
+    @media (max-width: 1020px) {
+      .two { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1>NSS Quarry</h1>
+        <div class="sub">Interactive security operations dashboard for NSS Parquet data</div>
+      </div>
+      <div class="toolbar">
+        <div class="badge"><span class="dot"></span> API Live</div>
+        <div class="badge">Auth Mode: <strong id="auth-mode-label"></strong></div>
+        <div class="badge" id="user-badge">User: <strong id="user-label">not signed in</strong></div>
+      </div>
+    </div>
+
+    <section id="auth-panel" class="panel">
+      <h2>Sign In</h2>
+      <p class="muted">Use local credentials for demo installs, or continue with your configured OIDC provider.</p>
+      <div class="auth-mode" id="auth-mode-chip"></div>
+      <form id="local-login-form" class="form-grid" style="margin-top: 10px;">
+        <div>
+          <label for="login-user">Username</label>
+          <input id="login-user" autocomplete="username" required>
+        </div>
+        <div>
+          <label for="login-pass">Password</label>
+          <input id="login-pass" type="password" autocomplete="current-password" required>
+        </div>
+        <div>
+          <label>&nbsp;</label>
+          <button type="submit" class="primary">Local Login</button>
+        </div>
+      </form>
+      <div class="toolbar" style="margin-top: 8px;">
+        <button id="oidc-login" class="ghost">Continue with OIDC</button>
+      </div>
+      <div class="message" id="auth-msg"></div>
+    </section>
+
+    <section id="app-panel" class="hidden">
+      <div class="toolbar panel" style="margin-bottom: 14px;">
+        <div class="muted">Signed in as <strong id="whoami"></strong></div>
+        <div class="spacer"></div>
+        <button id="refresh-all" class="ghost">Refresh</button>
+        <button id="logout" class="ghost">Logout</button>
+      </div>
+
+      <div id="metric-cards" class="grid cards"></div>
+
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="panel">
+          <h3 id="chart-title-a">Top Chart A</h3>
+          <div id="chart-a" class="chart"></div>
+        </div>
+        <div class="panel">
+          <h3 id="chart-title-b">Top Chart B</h3>
+          <div id="chart-b" class="chart"></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top: 14px;">
+        <h3>Search Logs</h3>
+        <form id="search-form" class="form-grid">
+          <div><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
+          <div><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
+          <div><label for="limit">Limit</label><input id="limit" type="number" min="1" max="2000" value="200"></div>
+          <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
+          <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
+          <div><label for="f-action">Action</label><input id="f-action" placeholder="Blocked"></div>
+          <div><label for="f-threat">Threat</label><input id="f-threat" placeholder="EICAR"></div>
+          <div><label for="f-category">Category</label><input id="f-category" placeholder="Spyware Callback"></div>
+          <div><label for="f-ip">Source IP</label><input id="f-ip" placeholder="10.0.0.5"></div>
+          <div><label for="f-device">Device</label><input id="f-device" placeholder="LAPTOP-123"></div>
+          <div><label for="f-dept">Department</label><input id="f-dept" placeholder="IT"></div>
+          <div><label for="columns">Columns (comma-separated, optional)</label><input id="columns" placeholder="time,action,eurl,ologin,cip"></div>
+          <div>
+            <label>&nbsp;</label>
+            <button type="submit" class="primary">Run Search</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="export-csv" type="button" class="ghost">Export CSV</button>
+          </div>
+        </form>
+        <div id="search-msg" class="message"></div>
+      </div>
+
+      <div class="panel" style="margin-top: 14px;">
+        <h3>Search Results</h3>
+        <div class="muted" id="result-meta"></div>
+        <div id="results" class="table-wrap" style="margin-top: 8px;"></div>
+      </div>
+
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="panel">
+          <h3>Top Tables</h3>
+          <div id="top-tables"></div>
+        </div>
+        <div class="panel">
+          <h3>Active Schema Mapping</h3>
+          <div id="schema-view"></div>
+        </div>
+      </div>
+
+      <div class="panel hidden" id="audit-panel" style="margin-top: 14px;">
+        <h3>Recent Audit Events (Admin)</h3>
+        <div id="audit-view" class="table-wrap"></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const AUTH_MODE = "__AUTH_MODE__";
+    let currentUser = null;
+    let latestSearchRequest = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    function modeLabel(mode) {
+      if (mode === "oidc_entra") return "OIDC Entra";
+      if (mode === "oidc_okta") return "OIDC Okta";
+      return "Local Users";
+    }
+
+    function toLocalInputValue(date) {
+      const tzOffsetMs = date.getTimezoneOffset() * 60000;
+      return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 16);
+    }
+
+    function inputToIso(id) {
+      const value = $(id).value;
+      if (!value) return null;
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return null;
+      return d.toISOString();
+    }
+
+    function setMessage(id, msg, ok = false) {
+      const el = $(id);
+      el.textContent = msg || "";
+      el.classList.toggle("ok-msg", ok);
+    }
+
+    async function apiFetch(path, options = {}) {
+      const init = {
+        credentials: "include",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        ...options
+      };
+      if (init.body && typeof init.body !== "string") {
+        init.body = JSON.stringify(init.body);
+      }
+      const res = await fetch(path, init);
+      let payload = null;
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) payload = await res.json();
+      if (!res.ok) {
+        const msg = payload && payload.error ? payload.error : `${res.status} ${res.statusText}`;
+        const err = new Error(msg);
+        err.status = res.status;
+        throw err;
+      }
+      return payload;
+    }
+
+    function toggleAuthUi() {
+      const localOnly = AUTH_MODE === "local_users";
+      $("local-login-form").classList.toggle("hidden", !localOnly);
+      $("oidc-login").classList.toggle("hidden", localOnly);
+    }
+
+    async function checkSession() {
+      try {
+        const me = await apiFetch("/api/me", { method: "GET" });
+        currentUser = me.user;
+        return true;
+      } catch (err) {
+        currentUser = null;
+        return false;
+      }
+    }
+
+    function renderUserState() {
+      $("auth-mode-label").textContent = modeLabel(AUTH_MODE);
+      $("auth-mode-chip").textContent = `Configured authentication: ${modeLabel(AUTH_MODE)}`;
+      if (currentUser) {
+        $("user-label").textContent = `${currentUser.username} (${currentUser.role})`;
+        $("whoami").textContent = `${currentUser.username} (${currentUser.role})`;
+      } else {
+        $("user-label").textContent = "not signed in";
+        $("whoami").textContent = "not signed in";
+      }
+    }
+
+    function showApp(authenticated) {
+      $("auth-panel").classList.toggle("hidden", authenticated);
+      $("app-panel").classList.toggle("hidden", !authenticated);
+    }
+
+    async function loadDashboard() {
+      const data = await apiFetch("/api/dashboards/overview", { method: "GET" });
+      const cardsHost = $("metric-cards");
+      cardsHost.innerHTML = "";
+      for (const card of data.cards || []) {
+        const div = document.createElement("div");
+        div.className = "panel metric";
+        div.innerHTML = `<div class="n">${card.name}</div><div class="k">${card.value}</div>`;
+        cardsHost.appendChild(div);
+      }
+      renderTopTables(data.tables || []);
+      renderChartFromTable(data.tables?.[0], "chart-a", "chart-title-a");
+      renderChartFromTable(data.tables?.[1], "chart-b", "chart-title-b");
+    }
+
+    function renderChartFromTable(table, chartId, titleId) {
+      const host = $(chartId);
+      const title = $(titleId);
+      host.innerHTML = "";
+      if (!table || !Array.isArray(table.rows) || table.rows.length === 0) {
+        title.textContent = "No data";
+        host.innerHTML = "<div class='muted'>No values available.</div>";
+        return;
+      }
+      title.textContent = table.name;
+      const values = table.rows.map(r => Number.parseInt(r[1], 10) || 0);
+      const max = Math.max(1, ...values);
+      for (const row of table.rows.slice(0, 12)) {
+        const label = row[0] || "None";
+        const value = Number.parseInt(row[1], 10) || 0;
+        const width = Math.round((value / max) * 100);
+        const line = document.createElement("div");
+        line.className = "bar-row";
+        line.innerHTML = `
+          <div title="${label}">${label}</div>
+          <div class="bar"><span style="width:${width}%"></span></div>
+          <div>${value}</div>
+        `;
+        host.appendChild(line);
+      }
+    }
+
+    function renderTopTables(tables) {
+      const host = $("top-tables");
+      host.innerHTML = "";
+      if (!tables || tables.length === 0) {
+        host.innerHTML = "<div class='muted'>No aggregate tables returned.</div>";
+        return;
+      }
+      for (const table of tables) {
+        const block = document.createElement("div");
+        block.className = "panel";
+        block.style.marginBottom = "10px";
+        block.innerHTML = `<h3>${table.name}</h3>`;
+        const wrap = document.createElement("div");
+        wrap.className = "table-wrap";
+        wrap.appendChild(buildTable(table.columns || [], table.rows || []));
+        block.appendChild(wrap);
+        host.appendChild(block);
+      }
+    }
+
+    function buildTable(columns, rows) {
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+      for (const c of columns) {
+        const th = document.createElement("th");
+        th.textContent = c;
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        for (const cell of row) {
+          const td = document.createElement("td");
+          td.textContent = cell == null ? "" : String(cell);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      return table;
+    }
+
+    function buildSearchRequestFromForm() {
+      const req = {
+        time_from: inputToIso("time-from"),
+        time_to: inputToIso("time-to"),
+        filters: {
+          user: $("f-user").value || null,
+          url: $("f-url").value || null,
+          action: $("f-action").value || null,
+          threat: $("f-threat").value || null,
+          category: $("f-category").value || null,
+          source_ip: $("f-ip").value || null,
+          device: $("f-device").value || null,
+          department: $("f-dept").value || null,
+        },
+        limit: Number.parseInt($("limit").value, 10) || 200,
+      };
+      const rawCols = $("columns").value.trim();
+      if (rawCols.length > 0) {
+        req.columns = rawCols.split(",").map(v => v.trim()).filter(v => v.length > 0);
+      }
+      latestSearchRequest = req;
+      return req;
+    }
+
+    async function runSearch() {
+      setMessage("search-msg", "");
+      const req = buildSearchRequestFromForm();
+      if (!req.time_from || !req.time_to) {
+        setMessage("search-msg", "Please provide valid from/to timestamps.");
+        return;
+      }
+      const result = await apiFetch("/api/search", { method: "POST", body: req });
+      renderSearchResult(result);
+    }
+
+    function renderSearchResult(result) {
+      const rows = result.rows || [];
+      $("result-meta").textContent = `Rows: ${result.row_count} | Truncated: ${result.truncated ? "yes" : "no"}`;
+      const host = $("results");
+      host.innerHTML = "";
+      if (rows.length === 0) {
+        host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
+        return;
+      }
+      const columns = Object.keys(rows[0]);
+      const raw = rows.map(r => columns.map(c => r[c] == null ? "" : String(r[c])));
+      host.appendChild(buildTable(columns, raw));
+    }
+
+    async function exportCsv() {
+      setMessage("search-msg", "");
+      const req = latestSearchRequest || buildSearchRequestFromForm();
+      const res = await fetch("/api/export/csv", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(req),
+      });
+      if (!res.ok) {
+        let msg = `${res.status} ${res.statusText}`;
+        try {
+          const e = await res.json();
+          if (e.error) msg = e.error;
+        } catch (_) {}
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "nss-quarry-export.csv";
+      a.click();
+      URL.revokeObjectURL(url);
+      setMessage("search-msg", "CSV export downloaded.", true);
+    }
+
+    async function loadSchema() {
+      const schema = await apiFetch("/api/schema", { method: "GET" });
+      const host = $("schema-view");
+      host.innerHTML = "";
+      const rows = (schema.fields || []).map(f => [f.name, f.mapped_from]);
+      host.appendChild(buildTable(["column", "source_field"], rows));
+      const details = document.createElement("div");
+      details.className = "muted";
+      details.style.marginTop = "8px";
+      details.textContent = `Defaults: ${schema.default_columns.join(", ")} | Masked for helpdesk: ${schema.helpdesk_mask_fields.join(", ")}`;
+      host.appendChild(details);
+    }
+
+    async function loadAuditIfAdmin() {
+      const panel = $("audit-panel");
+      const host = $("audit-view");
+      try {
+        const rows = await apiFetch("/api/audit", { method: "GET" });
+        panel.classList.remove("hidden");
+        if (!rows || rows.length === 0) {
+          host.innerHTML = "<div class='muted' style='padding:10px;'>No audit events.</div>";
+          return;
+        }
+        const data = rows.map(r => [
+          r.at || "",
+          r.actor || "",
+          r.role || "",
+          r.action || "",
+          r.outcome || ""
+        ]);
+        host.innerHTML = "";
+        host.appendChild(buildTable(["at", "actor", "role", "action", "outcome"], data));
+      } catch (err) {
+        panel.classList.add("hidden");
+      }
+    }
+
+    async function refreshAll() {
+      await Promise.all([loadDashboard(), loadSchema(), runSearch(), loadAuditIfAdmin()]);
+    }
+
+    async function onLocalLogin(e) {
+      e.preventDefault();
+      setMessage("auth-msg", "");
+      try {
+        const username = $("login-user").value.trim();
+        const password = $("login-pass").value;
+        await apiFetch("/auth/login", { method: "POST", body: { username, password } });
+        const ok = await checkSession();
+        if (!ok) throw new Error("login did not create a valid session");
+        renderUserState();
+        showApp(true);
+        await refreshAll();
+      } catch (err) {
+        setMessage("auth-msg", err.message || "Login failed");
+      }
+    }
+
+    async function onLogout() {
+      try {
+        await fetch("/auth/logout", { method: "POST", credentials: "include" });
+      } catch (_) {}
+      currentUser = null;
+      renderUserState();
+      showApp(false);
+    }
+
+    async function init() {
+      $("auth-mode-label").textContent = modeLabel(AUTH_MODE);
+      $("auth-mode-chip").textContent = `Configured authentication: ${modeLabel(AUTH_MODE)}`;
+      toggleAuthUi();
+
+      const now = new Date();
+      const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      $("time-from").value = toLocalInputValue(hourAgo);
+      $("time-to").value = toLocalInputValue(now);
+
+      $("local-login-form").addEventListener("submit", onLocalLogin);
+      $("oidc-login").addEventListener("click", () => { window.location.href = "/auth/login"; });
+      $("logout").addEventListener("click", onLogout);
+      $("refresh-all").addEventListener("click", async () => {
+        try { await refreshAll(); } catch (err) { setMessage("search-msg", err.message || "Refresh failed"); }
+      });
+      $("search-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try { await runSearch(); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
+      });
+      $("export-csv").addEventListener("click", async () => {
+        try { await exportCsv(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }
+      });
+
+      const isAuthed = await checkSession();
+      renderUserState();
+      showApp(isAuthed);
+      if (isAuthed) {
+        try {
+          await refreshAll();
+        } catch (err) {
+          setMessage("search-msg", err.message || "Failed to load dashboard");
+        }
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
