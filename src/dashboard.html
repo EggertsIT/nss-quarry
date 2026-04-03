@@ -478,6 +478,37 @@
       return table;
     }
 
+    function formatAuditMetadata(meta) {
+      if (!meta || typeof meta !== "object") return "";
+      if (meta.query && typeof meta.query === "object") {
+        const q = meta.query;
+        const parts = [];
+        if (q.time_from && q.time_to) {
+          parts.push(`${q.time_from} -> ${q.time_to}`);
+        }
+        if (q.filters && typeof q.filters === "object") {
+          const activeFilters = Object.entries(q.filters)
+            .filter(([, v]) => v !== null && v !== "")
+            .map(([k, v]) => `${k}=${v}`);
+          if (activeFilters.length > 0) {
+            parts.push(`filters: ${activeFilters.join(", ")}`);
+          }
+        }
+        if (Array.isArray(q.columns) && q.columns.length > 0) {
+          parts.push(`columns: ${q.columns.join(", ")}`);
+        }
+        if (q.limit != null) {
+          parts.push(`limit: ${q.limit}`);
+        }
+        return parts.join(" | ");
+      }
+      try {
+        return JSON.stringify(meta);
+      } catch (_) {
+        return String(meta);
+      }
+    }
+
     function normalizeFilterValue(id) {
       const raw = $(id).value;
       if (raw == null) return null;
@@ -623,10 +654,11 @@
           r.actor || "",
           r.role || "",
           r.action || "",
-          r.outcome || ""
+          r.outcome || "",
+          formatAuditMetadata(r.metadata)
         ]);
         host.innerHTML = "";
-        host.appendChild(buildTable(["at", "actor", "role", "action", "outcome"], data));
+        host.appendChild(buildTable(["at", "actor", "role", "action", "outcome", "metadata"], data));
       } catch (err) {
         panel.classList.add("hidden");
       }
