@@ -74,6 +74,12 @@
     .metric .n { color: var(--muted); font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .toolbar .spacer { flex: 1 1 auto; }
+    .menu { display: flex; gap: 8px; flex-wrap: wrap; }
+    .menu button.active {
+      background: linear-gradient(140deg, #1e80e2, #1470d0);
+      border-color: #186cc2;
+      color: #fff;
+    }
     label { font-size: 0.82rem; color: var(--muted); display: block; margin-bottom: 4px; }
     input, select, button, textarea {
       font: inherit;
@@ -196,6 +202,14 @@
         <button id="logout" class="ghost">Logout</button>
       </div>
 
+      <div class="panel" style="margin-bottom: 14px;">
+        <div class="menu">
+          <button id="menu-main" class="ghost active" type="button">Main</button>
+          <button id="menu-audit" class="ghost hidden" type="button">Audit</button>
+        </div>
+      </div>
+
+      <div id="view-main">
       <div id="metric-cards" class="grid cards"></div>
 
       <div class="grid two" style="margin-top: 14px;">
@@ -260,8 +274,9 @@
           <div id="schema-view"></div>
         </div>
       </div>
+      </div>
 
-      <div class="panel hidden" id="audit-panel" style="margin-top: 14px;">
+      <div class="panel hidden" id="view-audit" style="margin-top: 14px;">
         <h3>Recent Audit Events (Admin)</h3>
         <div id="audit-view" class="table-wrap"></div>
       </div>
@@ -273,6 +288,7 @@
     let currentUser = null;
     let latestSearchRequest = null;
     let latestSchema = null;
+    let activeView = "main";
 
     function $(id) { return document.getElementById(id); }
 
@@ -350,11 +366,29 @@
         $("user-label").textContent = "not signed in";
         $("whoami").textContent = "not signed in";
       }
+      syncMenuAccess();
     }
 
     function showApp(authenticated) {
       $("auth-panel").classList.toggle("hidden", authenticated);
       $("app-panel").classList.toggle("hidden", !authenticated);
+    }
+
+    function setView(view) {
+      activeView = view;
+      const isAudit = view === "audit";
+      $("view-main").classList.toggle("hidden", isAudit);
+      $("view-audit").classList.toggle("hidden", !isAudit);
+      $("menu-main").classList.toggle("active", !isAudit);
+      $("menu-audit").classList.toggle("active", isAudit);
+    }
+
+    function syncMenuAccess() {
+      const isAdmin = currentUser && currentUser.role === "admin";
+      $("menu-audit").classList.toggle("hidden", !isAdmin);
+      if (!isAdmin && activeView === "audit") {
+        setView("main");
+      }
     }
 
     async function loadDashboard() {
@@ -575,7 +609,7 @@
     }
 
     async function loadAuditIfAdmin() {
-      const panel = $("audit-panel");
+      const panel = $("view-audit");
       const host = $("audit-view");
       try {
         const rows = await apiFetch("/api/audit", { method: "GET" });
@@ -645,6 +679,11 @@
       $("refresh-all").addEventListener("click", async () => {
         try { await refreshAll(); } catch (err) { setMessage("search-msg", err.message || "Refresh failed"); }
       });
+      $("menu-main").addEventListener("click", () => setView("main"));
+      $("menu-audit").addEventListener("click", async () => {
+        setView("audit");
+        try { await loadAuditIfAdmin(); } catch (_) {}
+      });
       $("search-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         try { await runSearch(); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
@@ -656,6 +695,7 @@
       const isAuthed = await checkSession();
       renderUserState();
       showApp(isAuthed);
+      setView("main");
       if (isAuthed) {
         try {
           await refreshAll();
