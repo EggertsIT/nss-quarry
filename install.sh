@@ -240,6 +240,13 @@ grant_parquet_access() {
 
   if command -v setfacl >/dev/null 2>&1; then
     log "Granting read access using ACLs"
+    local parent
+    parent="$(dirname "$parquet_root")"
+    while [[ -n "$parent" && "$parent" != "/" ]]; do
+      setfacl -m "u:${app_user}:--x" "$parent"
+      parent="$(dirname "$parent")"
+    done
+
     setfacl -m "u:${app_user}:rX" "$parquet_root"
     setfacl -R -m "u:${app_user}:rX" "$parquet_root"
     find "$parquet_root" -type d -exec setfacl -m "d:u:${app_user}:rX" {} +

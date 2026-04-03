@@ -148,3 +148,18 @@ cargo run -- run --config ./config.toml
 - Keep audit log path protected by filesystem permissions.
 - For enterprise SSO design, role claim strategy, and troubleshooting:
   - `docs/oidc-setup.md`
+
+## Troubleshooting
+
+If queries fail with:
+
+`IO Error: No files found that match the pattern ".../dt=*/hour=*/*.parquet"`
+
+verify parent directory traversal permissions for `nssquarry`:
+
+```bash
+sudo setfacl -m u:nssquarry:--x /var/lib/nss-ingestor
+sudo setfacl -m u:nssquarry:rX /var/lib/nss-ingestor/data
+sudo setfacl -R -m u:nssquarry:rX /var/lib/nss-ingestor/data
+curl -k https://127.0.0.1/readyz
+```

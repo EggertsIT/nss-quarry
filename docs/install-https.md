@@ -90,7 +90,18 @@ Installer flow:
 - ACL mode (`setfacl`) when available
 - fallback to source directory group membership when ACL tools are unavailable
 
-If you skip automatic grant, ensure manually that `nssquarry` has at least read/execute access on the Parquet root and subdirectories.
+If you skip automatic grant, ensure manually that `nssquarry` has at least:
+- execute (`x`) on every parent directory in the path to the Parquet root
+- read/execute (`r-x`) on the Parquet root and partition directories
+- read (`r`) on Parquet files
+
+Example for default layout:
+
+```bash
+sudo setfacl -m u:nssquarry:--x /var/lib/nss-ingestor
+sudo setfacl -m u:nssquarry:rX /var/lib/nss-ingestor/data
+sudo setfacl -R -m u:nssquarry:rX /var/lib/nss-ingestor/data
+```
 
 ## Replacing Self-Signed with Enterprise Certs
 
