@@ -771,7 +771,18 @@ server {
     ssl_prefer_server_ciphers off;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
+    location = /_auth_ingestor {
+        internal;
+        proxy_pass http://127.0.0.1:9191/authz/ingestor;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Cookie \$http_cookie;
+        proxy_set_header X-Original-URI \$request_uri;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
     location /ingestor/ {
+        auth_request /_auth_ingestor;
         proxy_pass http://127.0.0.1:9090/;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
@@ -779,6 +790,11 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
         proxy_read_timeout 60s;
+
+        # Rewrite absolute dashboard API calls so embedded iframe stays under /ingestor/*.
+        proxy_set_header Accept-Encoding "";
+        sub_filter_once off;
+        sub_filter "'/api/" "'/ingestor/api/";
     }
 
     location / {

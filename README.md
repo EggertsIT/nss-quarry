@@ -6,7 +6,7 @@
 
 - Query last 14-day parquet partitions with strict guardrails (max 7-day query window by default).
 - Troubleshooting dashboards and filtered search APIs.
-- Embedded `NSS Ingestor` dashboard tab (via `/ingestor/*` reverse-proxy).
+- Embedded `NSS Ingestor` dashboard tab (admin-only, via `/ingestor/*` reverse-proxy).
 - CSV export with audit trail.
 - RBAC: `helpdesk`, `analyst`, `admin`.
 - Authentication modes:

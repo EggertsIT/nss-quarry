@@ -432,6 +432,9 @@
       if (view === "audit" && !isAdminUser()) {
         view = "main";
       }
+      if (view === "ingestor" && !isAdminUser()) {
+        view = "main";
+      }
       if (view !== "main" && view !== "ingestor" && view !== "audit") {
         view = "main";
       }
@@ -448,6 +451,7 @@
 
     function syncMenuAccess() {
       const isAdmin = isAdminUser();
+      $("menu-ingestor").classList.toggle("hidden", !isAdmin);
       $("menu-audit").classList.toggle("hidden", !isAdmin);
       setView(activeView);
     }

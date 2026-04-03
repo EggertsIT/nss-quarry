@@ -128,6 +128,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         .route("/auth/callback", get(auth_callback_oidc))
         .route("/auth/logout", post(auth_logout))
         .route("/api/me", get(api_me))
+        .route("/authz/ingestor", get(authz_ingestor))
         .route("/api/search", post(api_search))
         .route("/api/export/csv", post(api_export_csv))
         .route("/api/dashboards/{name}", get(api_dashboard))
@@ -273,6 +274,14 @@ async fn api_me(
 ) -> Result<Json<AuthResponse>, AppError> {
     let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
     Ok(Json(AuthResponse { user }))
+}
+
+async fn authz_ingestor(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<StatusCode, AppError> {
+    let _ = require_user(&state, &jar, RoleName::Admin).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn api_search(
