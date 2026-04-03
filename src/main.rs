@@ -128,7 +128,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         .route("/api/me", get(api_me))
         .route("/api/search", post(api_search))
         .route("/api/export/csv", post(api_export_csv))
-        .route("/api/dashboards/:name", get(api_dashboard))
+        .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
         .route("/api/audit", get(api_audit))
         .with_state(state);
