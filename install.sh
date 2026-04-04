@@ -21,7 +21,7 @@ Options:
         - helpdesk (role: helpdesk, password: helpdesk)
       Intended only for lab/testing/demo.
   --install-deps
-      Auto-install OS dependencies on RHEL/Rocky via dnf (nginx, openssl, acl, build tools).
+      Auto-install OS dependencies on RHEL/Rocky via dnf (nginx, openssl, acl, SELinux tools, build tools).
   --install-rust
       If cargo is missing and a build is required, install Rust toolchain via rustup.
   --uninstall
@@ -105,12 +105,57 @@ install_os_dependencies() {
     nginx \
     openssl \
     acl \
+    policycoreutils-python-utils \
     curl \
     ca-certificates \
     gcc \
     gcc-c++ \
     make \
     pkgconf-pkg-config
+}
+
+ensure_selinux_nginx_connect() {
+  if ! command -v getenforce >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local selinux_mode
+  selinux_mode="$(getenforce 2>/dev/null || true)"
+  case "$selinux_mode" in
+    Disabled|"")
+      return 0
+      ;;
+    Enforcing|Permissive)
+      ;;
+    *)
+      warn "Unknown SELinux mode '$selinux_mode'; skipping SELinux nginx boolean check."
+      return 0
+      ;;
+  esac
+
+  if ! command -v getsebool >/dev/null 2>&1 || ! command -v setsebool >/dev/null 2>&1; then
+    if [[ "$selinux_mode" == "Enforcing" ]]; then
+      fail "SELinux is Enforcing but getsebool/setsebool is missing. Install policycoreutils-python-utils and rerun."
+    fi
+    warn "SELinux is $selinux_mode but getsebool/setsebool not found; skipping automatic boolean setup."
+    return 0
+  fi
+
+  local current
+  current="$(getsebool httpd_can_network_connect 2>/dev/null | awk '{print $3}' || true)"
+  if [[ "$current" == "on" ]]; then
+    log "SELinux boolean already set: httpd_can_network_connect=on"
+    return 0
+  fi
+
+  log "Enabling SELinux boolean: httpd_can_network_connect=1 (required for nginx -> nss-quarry upstream)"
+  if ! setsebool -P httpd_can_network_connect 1; then
+    if [[ "$selinux_mode" == "Enforcing" ]]; then
+      fail "Failed to set SELinux boolean httpd_can_network_connect while SELinux is Enforcing."
+    fi
+    warn "Failed to set SELinux boolean httpd_can_network_connect."
+    return 0
+  fi
 }
 
 install_rust_toolchain() {
@@ -808,6 +853,8 @@ server {
     }
 }
 EOF
+
+ensure_selinux_nginx_connect
 
 log "Validating nginx config"
 nginx -t

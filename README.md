@@ -45,6 +45,7 @@ cargo build --release
 - forces `bind_addr = 127.0.0.1:9191`
 - forces `auth.secure_cookie = true`
 - installs a hardened systemd service running as unprivileged `nssquarry`
+- when SELinux is enforcing, sets `httpd_can_network_connect=1` for nginx upstream connectivity
 - configures nginx route `/ingestor/* -> 127.0.0.1:9090` for integrated ingestor dashboard
 
 When using `self_signed`:
