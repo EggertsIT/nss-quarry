@@ -2,6 +2,15 @@
 
 `nss-quarry` provides secure IT-helpdesk access to NSS Parquet logs produced by `nss-to-parquet`.
 
+## License and Commercial Use
+
+This project is source-available under `BUSL-1.1` (Business Source License), not OSI open source.
+
+- License terms: `LICENSE`
+- Commercial subscription terms: `COMMERCIAL_LICENSE.md`
+
+Production/commercial use requires a paid monthly commercial subscription from the Licensor.
+
 ## Features
 
 - Query last 14-day parquet partitions with strict guardrails (max 7-day query window by default).
