@@ -130,7 +130,7 @@
       background: linear-gradient(180deg, rgba(251, 253, 255, 0.98), rgba(243, 248, 254, 0.9));
       overflow: hidden;
     }
-    #flow-map {
+    .flow-map-svg {
       width: 100%;
       height: auto;
       display: block;
@@ -334,6 +334,12 @@
         <h3>Search Results</h3>
         <div class="muted" id="result-meta"></div>
         <div id="results" class="table-wrap" style="margin-top: 8px;"></div>
+      </div>
+
+      <div class="panel map-panel" style="margin-top: 14px;">
+        <h3>Search Country Flow Map</h3>
+        <div class="network-map-wrap" id="search-flow-map-wrap"></div>
+        <div class="map-caption" id="search-flow-map-meta">Run a search to render source->destination country flows.</div>
       </div>
       </div>
 
@@ -858,34 +864,36 @@
       return fallback;
     }
 
-    async function renderCountryFlowMap(tables) {
-      const host = $("flow-map-wrap");
-      const meta = $("flow-map-meta");
+    async function renderFlowMapPanel(hostId, metaId, pairs, options = {}) {
+      const host = $(hostId);
+      const meta = $(metaId);
       host.innerHTML = "";
+      const width = options.width || 1400;
+      const height = options.height || 620;
+      const maxRoutes = options.maxRoutes || 220;
+      const label = options.label || "source_country -> destination_country";
+      const noDataCaption = options.noDataCaption || "No country-to-country flow data available for current dataset.";
 
-      const table = (tables || []).find(t => t && t.name === "country_flows_24h");
-      const rows = Array.isArray(table?.rows) ? table.rows : [];
-      const width = 1400;
-      const height = 620;
-
-      const parsed = rows.map((row) => {
-        const source = row?.[0] || "";
-        const destination = row?.[1] || "";
-        const count = Number.parseInt(row?.[2], 10) || 0;
+      const parsed = (pairs || []).map((pair) => {
+        const source = pair?.source || "";
+        const destination = pair?.destination || "";
+        const count = Number.parseInt(pair?.count, 10) || 0;
         const srcLatLon = resolveCountryLatLon(source);
         const dstLatLon = resolveCountryLatLon(destination);
         return { source, destination, count, srcLatLon, dstLatLon };
       });
-      const mappable = parsed.filter(f => f.count > 0 && f.srcLatLon && f.dstLatLon).slice(0, 220);
-
+      const mappable = parsed
+        .filter((f) => f.count > 0 && f.srcLatLon && f.dstLatLon)
+        .sort((a, b) => b.count - a.count)
+        .slice(0, maxRoutes);
       const totalCount = parsed.reduce((sum, f) => sum + (f.count || 0), 0);
       if (mappable.length === 0) {
-        meta.textContent = "Source: srcip_country -> dstip_country | no mappable country flow data in the last 24h.";
+        meta.textContent = `${label} | no mappable flow data`;
       } else {
-        meta.textContent = `Source: srcip_country -> dstip_country | rendered routes: ${mappable.length.toLocaleString()} | total flow events: ${totalCount.toLocaleString()}`;
+        meta.textContent = `${label} | rendered routes: ${mappable.length.toLocaleString()} | total flow events: ${totalCount.toLocaleString()}`;
       }
 
-      const maxCount = Math.max(1, ...mappable.map(f => f.count));
+      const maxCount = Math.max(1, ...mappable.map((f) => f.count));
       const nodeWeights = new Map();
       const arcPaths = [];
       const land = await buildWorldLandLayer(width, height);
@@ -895,10 +903,7 @@
         const [dstLat, dstLon] = flow.dstLatLon;
         const src = projectEquirectangular(srcLat, srcLon, width, height);
         const dst = projectEquirectangular(dstLat, dstLon, width, height);
-
-        const dx = dst.x - src.x;
-        const dy = dst.y - src.y;
-        const dist = Math.hypot(dx, dy);
+        const dist = Math.hypot(dst.x - src.x, dst.y - src.y);
         const curvature = Math.min(160, dist * 0.36) + 14;
         const cx = (src.x + dst.x) / 2;
         const cy = Math.min(src.y, dst.y) - curvature;
@@ -906,7 +911,7 @@
         const widthPx = (0.35 + norm * 1.55).toFixed(2);
         const opacity = (0.17 + norm * 0.68).toFixed(3);
         arcPaths.push(
-          `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#ff2ea6" stroke-opacity="${opacity}" stroke-width="${widthPx}" fill="none" stroke-linecap="round" />`
+          `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#2684ff" stroke-opacity="${opacity}" stroke-width="${widthPx}" fill="none" stroke-linecap="round" />`
         );
 
         const srcKey = `${src.x.toFixed(1)},${src.y.toFixed(1)}`;
@@ -921,7 +926,7 @@
         const [x, y] = key.split(",").map(Number);
         const norm = Math.sqrt(weight / maxNode);
         const radius = (0.8 + norm * 2.4).toFixed(2);
-        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="#ff4db4" fill-opacity="0.82" />`);
+        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="#46a1ff" fill-opacity="0.82" />`);
       }
 
       const latLines = [-60, -30, 0, 30, 60]
@@ -937,11 +942,12 @@
         })
         .join("");
       const gridLines = `${latLines}${lonLines}`;
+      const glowId = `${hostId.replace(/[^A-Za-z0-9_-]/g, "_")}-glow`;
 
       const svg = `
-        <svg id="flow-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Global country flow map">
+        <svg class="flow-map-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Country flow map">
           <defs>
-            <filter id="flowGlow">
+            <filter id="${glowId}">
               <feGaussianBlur stdDeviation="1.35" result="blur"/>
               <feMerge>
                 <feMergeNode in="blur"></feMergeNode>
@@ -952,7 +958,7 @@
           <rect x="0" y="0" width="${width}" height="${height}" fill="#f4f7fb" />
           ${gridLines}
           <g>${land}</g>
-          <g filter="url(#flowGlow)">${arcPaths.join("")}</g>
+          <g filter="url(#${glowId})">${arcPaths.join("")}</g>
           <g>${nodeCircles.join("")}</g>
         </svg>
       `;
@@ -961,9 +967,23 @@
       if (mappable.length === 0) {
         const empty = document.createElement("div");
         empty.className = "map-empty";
-        empty.textContent = "No country-to-country flow data available yet.";
+        empty.textContent = noDataCaption;
         host.appendChild(empty);
       }
+    }
+
+    async function renderCountryFlowMap(tables) {
+      const table = (tables || []).find((t) => t && t.name === "country_flows_24h");
+      const rows = Array.isArray(table?.rows) ? table.rows : [];
+      const pairs = rows.map((row) => ({
+        source: row?.[0] || "",
+        destination: row?.[1] || "",
+        count: Number.parseInt(row?.[2], 10) || 0,
+      }));
+      await renderFlowMapPanel("flow-map-wrap", "flow-map-meta", pairs, {
+        label: "Source: srcip_country -> dstip_country",
+        noDataCaption: "No country-to-country flow data available yet.",
+      });
     }
 
     function buildTable(columns, rows) {
@@ -1162,21 +1182,76 @@
         return;
       }
       const result = await apiFetch("/api/search", { method: "POST", body: req });
-      renderSearchResult(result);
+      await renderSearchResult(result);
     }
 
-    function renderSearchResult(result) {
+    function mappedFieldName(key, fallback) {
+      if (!latestSchema || !Array.isArray(latestSchema.fields)) {
+        return fallback;
+      }
+      const hit = latestSchema.fields.find((f) => f && f.name === key && f.mapped_from);
+      return hit && hit.mapped_from ? String(hit.mapped_from) : fallback;
+    }
+
+    async function renderSearchFlowMap(rows) {
+      const srcCountryCol = mappedFieldName("source_country_field", "srcip_country");
+      const dstCountryCol = mappedFieldName("destination_country_field", "dstip_country");
+      const host = $("search-flow-map-wrap");
+      const meta = $("search-flow-map-meta");
+      host.innerHTML = "";
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        meta.textContent = `Search rows: ${srcCountryCol} -> ${dstCountryCol} | no rows`;
+        const empty = document.createElement("div");
+        empty.className = "map-empty";
+        empty.textContent = "Run a search to render source->destination country flows.";
+        host.appendChild(empty);
+        return;
+      }
+
+      const first = rows[0] || {};
+      if (!Object.prototype.hasOwnProperty.call(first, srcCountryCol) || !Object.prototype.hasOwnProperty.call(first, dstCountryCol)) {
+        meta.textContent = `Search rows: ${srcCountryCol} -> ${dstCountryCol} | missing required columns`;
+        const empty = document.createElement("div");
+        empty.className = "map-empty";
+        empty.textContent = `Add both columns to the search: ${srcCountryCol}, ${dstCountryCol}`;
+        host.appendChild(empty);
+        return;
+      }
+
+      const pairCounts = new Map();
+      for (const row of rows) {
+        const source = row && row[srcCountryCol] != null ? String(row[srcCountryCol]).trim() : "";
+        const destination = row && row[dstCountryCol] != null ? String(row[dstCountryCol]).trim() : "";
+        if (!source || !destination) continue;
+        const key = `${source}||${destination}`;
+        pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+      }
+      const pairs = Array.from(pairCounts.entries()).map(([key, count]) => {
+        const [source, destination] = key.split("||");
+        return { source, destination, count };
+      });
+
+      await renderFlowMapPanel("search-flow-map-wrap", "search-flow-map-meta", pairs, {
+        label: `Search rows: ${srcCountryCol} -> ${dstCountryCol}`,
+        noDataCaption: "Search returned rows, but no mappable country pairs were found.",
+      });
+    }
+
+    async function renderSearchResult(result) {
       const rows = result.rows || [];
       $("result-meta").textContent = `Rows: ${result.row_count} | Truncated: ${result.truncated ? "yes" : "no"}`;
       const host = $("results");
       host.innerHTML = "";
       if (rows.length === 0) {
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
+        await renderSearchFlowMap([]);
         return;
       }
       const columns = Object.keys(rows[0]);
       const raw = rows.map(r => columns.map(c => r[c] == null ? "" : String(r[c])));
       host.appendChild(buildTable(columns, raw));
+      await renderSearchFlowMap(rows);
     }
 
     async function exportCsv() {
