@@ -697,13 +697,51 @@ fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
     validate_filter_value(filters.url.as_deref(), re, false)?;
     validate_filter_value(filters.action.as_deref(), re, false)?;
     validate_filter_value(filters.response_code.as_deref(), re, true)?;
-    validate_filter_value(filters.reason.as_deref(), re, false)?;
+    validate_reason_filter(filters.reason.as_deref())?;
     validate_filter_value(filters.threat.as_deref(), re, false)?;
     validate_filter_value(filters.category.as_deref(), re, false)?;
     validate_filter_value(filters.source_ip.as_deref(), re, true)?;
     validate_filter_value(filters.server_ip.as_deref(), re, true)?;
     validate_filter_value(filters.device.as_deref(), re, false)?;
     validate_filter_value(filters.department.as_deref(), re, false)?;
+    Ok(())
+}
+
+fn validate_reason_filter(value: Option<&str>) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.chars().count() > 256 {
+        anyhow::bail!("reason filter exceeds 256 characters");
+    }
+    for c in value.chars() {
+        if c.is_ascii_alphanumeric()
+            || matches!(
+                c,
+                ' ' | '@'
+                    | '.'
+                    | '_'
+                    | ':'
+                    | '/'
+                    | '-'
+                    | ','
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '&'
+                    | '+'
+                    | '%'
+                    | '\''
+            )
+        {
+            continue;
+        }
+        anyhow::bail!("reason filter contains disallowed characters");
+    }
     Ok(())
 }
 
@@ -850,6 +888,32 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("filter value contains disallowed characters")
+        );
+    }
+
+    #[test]
+    fn validate_filters_allows_reason_with_policy_punctuation() {
+        let re = Regex::new(r"^[A-Za-z0-9@\._:/\-\s]{1,256}$").expect("regex");
+        let filters = SearchFilters {
+            reason: Some(
+                "Violates Compliance Category, archive to mailbox failed (PII)".to_string(),
+            ),
+            ..SearchFilters::default()
+        };
+        validate_filters(&filters, &re).expect("reason punctuation should be allowed");
+    }
+
+    #[test]
+    fn validate_filters_rejects_reason_with_control_characters() {
+        let re = Regex::new(r"^[A-Za-z0-9@\._:/\-\s]{1,256}$").expect("regex");
+        let filters = SearchFilters {
+            reason: Some("Bad\nReason".to_string()),
+            ..SearchFilters::default()
+        };
+        let err = validate_filters(&filters, &re).expect_err("must reject newline");
+        assert!(
+            err.to_string()
+                .contains("reason filter contains disallowed characters")
         );
     }
 

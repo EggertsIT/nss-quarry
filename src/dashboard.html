@@ -426,7 +426,11 @@
             </select>
           </div>
           <div><label for="f-respcode">Response Code</label><input id="f-respcode" placeholder="403 or 403,407"></div>
-          <div><label for="f-reason">Reason</label><input id="f-reason" placeholder="low TLS version"></div>
+          <div>
+            <label for="f-reason">Policy Reason</label>
+            <input id="f-reason" list="policy-reason-options" placeholder="Select or type a policy reason">
+            <datalist id="policy-reason-options"></datalist>
+          </div>
           <div><label for="f-threat">Threat</label><input id="f-threat" placeholder="EICAR"></div>
           <div><label for="f-category">Category</label><input id="f-category" placeholder="Spyware Callback"></div>
           <div><label for="f-ip">CIP (Source IP)</label><input id="f-ip" placeholder="10.0.0.5"></div>
@@ -548,8 +552,97 @@
     let auditTotalPages = 0;
     const auditPageSize = 50;
     const mapViewState = {};
+    const POLICY_REASON_OPTIONS = [
+      "Access denied due to bad server certificate",
+      "Access denied due to low TLS version",
+      "Blocked due to Bad SSL/TLS record",
+      "Blocked due to Server Probe Failure",
+      "Dropped due to failed client SSL/TLS handshake",
+      "Not allowed to establish SSL/TLS connection due to policy",
+      "Undecryptable Traffic Block",
+      "Unenrolled user is not allowed to establish SSL/TLS connection",
+      "Access denied due to Domain Fronting",
+      "Allow due to insufficient app data",
+      "Allowed due to override",
+      "Block Internet access",
+      "Blocked due to invalid server IP",
+      "Bypassed due to missing config",
+      "Country block outbound request: not allowed to access sites in this country",
+      "FTP access is blocked by a firewall policy",
+      "Internet access cautioned",
+      "Not allowed during this time of day",
+      "Not allowed to browse this category",
+      "Not allowed because URL is placed on the denylist",
+      "Blocked by Default URL Filtering",
+      "Request method cautioned",
+      "Request method not allowed for this category",
+      "Not allowed to use this site with personal credentials",
+      "Not allowed to use this Social Network/Blogging site",
+      "Not allowed to use this Webmail site",
+      "Not allowed to use this File Share site",
+      "Not allowed to post message to this site",
+      "Not allowed to send webmail",
+      "Not allowed to upload files to this site",
+      "Not allowed to upload/download media files of this type",
+      "Not allowed to use tunnels",
+      "Not allowed to use Adware/Spyware sites",
+      "Not allowed to use this IM site",
+      "Not allowed to use this Streaming/Media site",
+      "Not allowed to use this Consumer site",
+      "Not allowed the use of this enterprise site",
+      "Not allowed the use of this Hosting Providers site",
+      "Not allowed the use of this IT Services site",
+      "Not allowed the use of this sales and marketing site",
+      "File Attachment not allowed",
+      "Not allowed to access this file type",
+      "Not allowed to upload/download files of this type",
+      "Not allowed to upload/download unscannable file formats",
+      "Not allowed to upload/download encrypted or password-protected archive files",
+      "Not allowed to upload/download files of size greater than configured limit",
+      "Not allowed to access to FTP sites",
+      "Not allowed to use FTP over HTTP for upload",
+      "Not allowed to use HTTP tunnel",
+      "Malware block: malicious file",
+      "Sandbox block inbound response: malicious file",
+      "Quarantined",
+      "Isolate and Scan",
+      "Reputation block outbound request malicious URL",
+      "Reputation block outbound request: phishing site",
+      "Reputation block outbound request: botnet site",
+      "Reputation block outbound request: anonymization site",
+      "IPS block inbound response: phishing content",
+      "IPS block inbound response: malicious content",
+      "IPS block outbound request: botnet command and control traffic",
+      "IPS block outbound request: cross-site scripting (XSS) attack",
+      "IPS block: Cryptomining traffic",
+      "PageRisk block inbound response: page is unsafe",
+      "Timed out while waiting for a config",
+      "Dropped due to internal error",
+      "DNAT with redirect to FQDN failed",
+      "Web application is blocked by Firewall rule",
+      "Blocked - Tenant Restricted",
+      "Allowed",
+      "Allowed - No Active Content",
+      "Allowed and No Scan",
+      "Allowed and archived to mailbox",
+      "Allowed and archived to mailbox failed",
+      "Violates Compliance Category",
+      "Violates Compliance Category, archive to mailbox",
+      "Violates Compliance Category, archive to mailbox failed"
+    ];
 
     function $(id) { return document.getElementById(id); }
+
+    function populatePolicyReasonOptions() {
+      const host = $("policy-reason-options");
+      if (!host) return;
+      host.innerHTML = "";
+      for (const reason of POLICY_REASON_OPTIONS) {
+        const option = document.createElement("option");
+        option.value = reason;
+        host.appendChild(option);
+      }
+    }
 
     function modeLabel(mode) {
       if (mode === "oidc_entra") return "OIDC Entra";
@@ -1994,6 +2087,7 @@
       $("auth-mode-label").textContent = modeLabel(AUTH_MODE);
       $("auth-mode-chip").textContent = `Configured authentication: ${modeLabel(AUTH_MODE)}`;
       toggleAuthUi();
+      populatePolicyReasonOptions();
       bindMapControlButtons();
 
       const now = new Date();
