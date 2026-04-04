@@ -415,6 +415,13 @@
           <div><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
           <div><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
           <div><label for="limit">Limit</label><input id="limit" type="number" min="1" max="2000" value="200"></div>
+          <div id="mask-ips-wrap" class="hidden">
+            <label for="f-mask-ips">Admin</label>
+            <div style="display:flex; align-items:center; gap:8px; min-height:38px;">
+              <input id="f-mask-ips" type="checkbox" style="width:auto;">
+              <span class="muted">Hide IPs in results and CSV export</span>
+            </div>
+          </div>
           <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
           <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
           <div>
@@ -717,6 +724,11 @@
       } else {
         $("user-label").textContent = "not signed in";
         $("whoami").textContent = "not signed in";
+      }
+      const isAdmin = isAdminUser();
+      $("mask-ips-wrap").classList.toggle("hidden", !isAdmin);
+      if (!isAdmin) {
+        $("f-mask-ips").checked = false;
       }
       syncMenuAccess();
     }
@@ -1584,6 +1596,7 @@
           department: normalizeFilterValue("f-dept"),
         },
         limit: Number.parseInt($("limit").value, 10) || 200,
+        mask_ips: Boolean(isAdminUser() && $("f-mask-ips").checked),
       };
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {

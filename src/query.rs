@@ -138,6 +138,13 @@ impl QueryService {
             out.push(map);
         }
 
+        if req.mask_ips {
+            if role != RoleName::Admin {
+                anyhow::bail!("mask_ips is admin-only");
+            }
+            apply_admin_ip_masking(&mut out, &self.inner.fields);
+        }
+
         if role == RoleName::Helpdesk {
             apply_helpdesk_masking(&mut out, &self.inner.helpdesk_mask_fields);
         }
@@ -681,6 +688,37 @@ fn apply_helpdesk_masking(
     }
 }
 
+fn apply_admin_ip_masking(
+    rows: &mut [serde_json::Map<String, serde_json::Value>],
+    fields: &FieldMap,
+) {
+    let mut ip_fields = HashSet::new();
+    ip_fields.insert(fields.source_ip_field.clone());
+    ip_fields.insert(fields.server_ip_field.clone());
+    for field in [
+        "cip",
+        "cintip",
+        "cpubip",
+        "sip",
+        "source_ip",
+        "destination_ip",
+        "server_ip",
+        "src_ip",
+        "dst_ip",
+    ] {
+        ip_fields.insert(field.to_string());
+    }
+    for row in rows {
+        for key in &ip_fields {
+            if let Some(value) = row.get_mut(key)
+                && !value.is_null()
+            {
+                *value = serde_json::Value::String("[HIDDEN_BY_ADMIN]".to_string());
+            }
+        }
+    }
+}
+
 fn validate_time_window(from: DateTime<Utc>, to: DateTime<Utc>, max_days: i64) -> Result<()> {
     if to < from {
         anyhow::bail!("time_to must be >= time_from");
@@ -929,6 +967,7 @@ mod tests {
             },
             limit: Some(123),
             columns: Some(vec!["time".to_string(), "url".to_string()]),
+            mask_ips: false,
         };
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
@@ -960,6 +999,7 @@ mod tests {
             },
             limit: Some(50),
             columns: Some(vec!["time".to_string(), "sip".to_string()]),
+            mask_ips: false,
         };
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
@@ -1005,5 +1045,30 @@ mod tests {
         assert!(!joined.contains("hour=02/part-000001.parquet"));
 
         std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn apply_admin_ip_masking_masks_common_ip_columns() {
+        let mut row = serde_json::Map::new();
+        row.insert(
+            "cip".to_string(),
+            serde_json::Value::String("10.0.0.10".to_string()),
+        );
+        row.insert(
+            "sip".to_string(),
+            serde_json::Value::String("8.8.8.8".to_string()),
+        );
+        row.insert(
+            "url".to_string(),
+            serde_json::Value::String("example.com".to_string()),
+        );
+        let mut rows = vec![row];
+        let fields = FieldMap::default();
+
+        apply_admin_ip_masking(&mut rows, &fields);
+
+        assert_eq!(rows[0]["cip"], "[HIDDEN_BY_ADMIN]");
+        assert_eq!(rows[0]["sip"], "[HIDDEN_BY_ADMIN]");
+        assert_eq!(rows[0]["url"], "example.com");
     }
 }
