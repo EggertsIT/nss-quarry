@@ -23,10 +23,12 @@ Include:
 ## Current Assessment
 
 See [pentest.md](./pentest.md) for the latest internal penetration test summary and residual risks.
+See [docs/threat-model.md](./docs/threat-model.md) for trust boundaries, threat scenarios, and mapped controls.
 
 ## Dependency Audit Allowlist Policy
 
 `cargo audit` is enforced in CI with warnings denied.
+`cargo deny` advisories checks are also enforced in CI via [`deny.toml`](./deny.toml).
 
 Temporary exceptions are managed in [`audit-allowlist.txt`](./audit-allowlist.txt) and must include:
 - reason and business context,
@@ -36,8 +38,6 @@ Temporary exceptions are managed in [`audit-allowlist.txt`](./audit-allowlist.tx
 Current temporary exceptions:
 - `RUSTSEC-2023-0071` (`rsa`, transitive via `openidconnect`)  
   Owner: platform engineering. Status: no fixed upgrade available in current chain.
-- `RUSTSEC-2025-0134` (`rustls-pemfile` unmaintained, transitive via `oauth2/reqwest/openidconnect`)  
-  Owner: platform engineering. Status: track upstream migration path.
 
 ## Release Artifact Verification
 

@@ -169,6 +169,8 @@ cargo run -- run --config ./config.toml
   - `SECURITY.md`
 - Latest internal penetration test report:
   - `pentest.md`
+- Threat model:
+  - `docs/threat-model.md`
 
 ## Dependency Audit Policy
 
@@ -177,6 +179,13 @@ Run local dependency audit with project allowlist:
 ```bash
 cargo install cargo-audit --locked
 ./scripts/run_audit.sh
+```
+
+Run local deny policy checks:
+
+```bash
+cargo install cargo-deny --locked
+cargo deny check --config deny.toml advisories
 ```
 
 Current temporary allowlist entries are documented in:

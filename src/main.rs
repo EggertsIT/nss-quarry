@@ -120,7 +120,18 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         query,
     };
 
-    let app = Router::new()
+    let app = build_router(state);
+
+    let listener = tokio::net::TcpListener::bind(&cfg.server.bind_addr)
+        .await
+        .with_context(|| format!("failed binding to {}", cfg.server.bind_addr))?;
+    info!(bind = %cfg.server.bind_addr, "nss-quarry listening");
+    axum::serve(listener, app).await?;
+    Ok(())
+}
+
+fn build_router(state: AppState) -> Router {
+    Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/dashboard", get(dashboard_page))
@@ -135,14 +146,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         .route("/api/schema", get(api_schema))
         .route("/api/audit", get(api_audit))
         .route("/api/audit/export/csv", get(api_audit_export_csv))
-        .with_state(state);
-
-    let listener = tokio::net::TcpListener::bind(&cfg.server.bind_addr)
-        .await
-        .with_context(|| format!("failed binding to {}", cfg.server.bind_addr))?;
-    info!(bind = %cfg.server.bind_addr, "nss-quarry listening");
-    axum::serve(listener, app).await?;
-    Ok(())
+        .with_state(state)
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -922,5 +926,161 @@ impl IntoResponse for AppError {
             })),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode, header};
+    use tower::ServiceExt;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::config::LocalUser;
+
+    fn hash_password(password: &str) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(password.as_bytes(), &salt)
+            .expect("password hash")
+            .to_string()
+    }
+
+    fn test_config() -> Arc<AppConfig> {
+        let mut cfg = AppConfig::default();
+        cfg.auth.local_users.users = vec![
+            LocalUser {
+                username: "admin".to_string(),
+                password_hash: hash_password("admin"),
+                role: RoleName::Admin,
+                disabled: false,
+            },
+            LocalUser {
+                username: "analyst".to_string(),
+                password_hash: hash_password("analyst"),
+                role: RoleName::Analyst,
+                disabled: false,
+            },
+            LocalUser {
+                username: "helpdesk".to_string(),
+                password_hash: hash_password("helpdesk"),
+                role: RoleName::Helpdesk,
+                disabled: false,
+            },
+        ];
+
+        let root = std::env::temp_dir().join(format!("nss-quarry-tests-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("parquet")).expect("create parquet dir");
+        cfg.data.parquet_root = root.join("parquet");
+        cfg.audit.path = root.join("audit/audit.log");
+
+        Arc::new(cfg)
+    }
+
+    async fn test_app() -> Router {
+        let cfg = test_config();
+        let auth = AuthManager::new(&cfg.auth).await.expect("auth manager");
+        let query = QueryService::new(&cfg).expect("query service");
+        let audit = AuditLogger::new(&cfg.audit).await.expect("audit logger");
+        build_router(AppState {
+            cfg,
+            auth,
+            audit,
+            query,
+        })
+    }
+
+    async fn login_cookie(app: &Router, username: &str, password: &str) -> String {
+        let body = format!(r#"{{"username":"{username}","password":"{password}"}}"#);
+        let req = Request::builder()
+            .method("POST")
+            .uri("/auth/login")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.into_bytes()))
+            .expect("login request");
+        let res = app.clone().oneshot(req).await.expect("login response");
+        assert_eq!(res.status(), StatusCode::OK);
+        let set_cookie = res
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("session cookie")
+            .to_str()
+            .expect("set-cookie header");
+        set_cookie
+            .split(';')
+            .next()
+            .expect("cookie pair")
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn admin_routes_require_authentication() {
+        let app = test_app().await;
+
+        let req_ingestor = Request::builder()
+            .uri("/authz/ingestor")
+            .body(Body::empty())
+            .expect("request");
+        let res_ingestor = app.clone().oneshot(req_ingestor).await.expect("response");
+        assert_eq!(res_ingestor.status(), StatusCode::UNAUTHORIZED);
+
+        let req_audit = Request::builder()
+            .uri("/api/audit")
+            .body(Body::empty())
+            .expect("request");
+        let res_audit = app.clone().oneshot(req_audit).await.expect("response");
+        assert_eq!(res_audit.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn helpdesk_cannot_access_ingestor_admin_gate() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "helpdesk", "helpdesk").await;
+
+        let req = Request::builder()
+            .uri("/authz/ingestor")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("request");
+        let res = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn analyst_cannot_read_admin_audit_endpoint() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "analyst", "analyst").await;
+
+        let req = Request::builder()
+            .uri("/api/audit")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("request");
+        let res = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn admin_can_access_admin_only_endpoints() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "admin", "admin").await;
+
+        let req_ingestor = Request::builder()
+            .uri("/authz/ingestor")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("request");
+        let res_ingestor = app.clone().oneshot(req_ingestor).await.expect("response");
+        assert_eq!(res_ingestor.status(), StatusCode::NO_CONTENT);
+
+        let req_audit = Request::builder()
+            .uri("/api/audit?page=1&page_size=10")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("request");
+        let res_audit = app.clone().oneshot(req_audit).await.expect("response");
+        assert_eq!(res_audit.status(), StatusCode::OK);
     }
 }

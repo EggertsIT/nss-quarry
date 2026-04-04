@@ -1,0 +1,9 @@
+[graph]
+targets = []
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = [
+  "RUSTSEC-2023-0071", # rsa timing sidechannel; transitive via openidconnect chain, no complete upstream fix path yet
+]

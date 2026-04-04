@@ -8,10 +8,10 @@ use axum_extra::extract::cookie::{Cookie, SameSite};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
-use openidconnect::reqwest::async_http_client;
+use openidconnect::reqwest;
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, RedirectUrl, Scope,
-    TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, EndpointMaybeSet, EndpointNotSet,
+    EndpointSet, IssuerUrl, Nonce, RedirectUrl, Scope, TokenResponse,
 };
 use tokio::sync::RwLock;
 use tracing::warn;
@@ -30,12 +30,22 @@ pub struct AuthManager {
 
 #[derive(Clone)]
 struct OidcRuntime {
-    client: CoreClient,
+    client: OidcClient,
+    http_client: reqwest::Client,
     claim_username: String,
     claim_groups: String,
     role_map: OidcRoleMap,
     pending: Arc<RwLock<HashMap<String, PendingOidcState>>>,
 }
+
+type OidcClient = CoreClient<
+    EndpointSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointNotSet,
+    EndpointMaybeSet,
+    EndpointMaybeSet,
+>;
 
 #[derive(Debug, Clone)]
 struct PendingOidcState {
@@ -64,9 +74,13 @@ impl AuthManager {
                     .oidc
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("auth.oidc is required"))?;
+                let http_client = reqwest::ClientBuilder::new()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                    .context("failed building OIDC HTTP client")?;
                 let issuer = IssuerUrl::new(oidc_cfg.issuer_url.clone())
                     .context("invalid auth.oidc.issuer_url")?;
-                let metadata = CoreProviderMetadata::discover_async(issuer, async_http_client)
+                let metadata = CoreProviderMetadata::discover_async(issuer, &http_client)
                     .await
                     .context("failed OIDC discovery")?;
                 let client = CoreClient::from_provider_metadata(
@@ -80,6 +94,7 @@ impl AuthManager {
                 );
                 Some(OidcRuntime {
                     client,
+                    http_client,
                     claim_username: oidc_cfg.claim_username.clone(),
                     claim_groups: oidc_cfg.claim_groups.clone(),
                     role_map: oidc_cfg.role_map.clone(),
@@ -173,7 +188,8 @@ impl AuthManager {
         let token_response = oidc
             .client
             .exchange_code(AuthorizationCode::new(code.to_string()))
-            .request_async(async_http_client)
+            .context("missing token endpoint in provider metadata")?
+            .request_async(&oidc.http_client)
             .await
             .context("failed token exchange")?;
         let id_token = token_response

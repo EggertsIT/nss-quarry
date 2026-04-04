@@ -12,7 +12,7 @@ base64 = "0.22"
 chrono = { version = "0.4.44", features = ["clock", "serde"] }
 clap = { version = "4.6", features = ["derive"] }
 duckdb = { version = "1.2", features = ["bundled"] }
-openidconnect = "3.5"
+openidconnect = "4.0"
 rand = "0.8"
 regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
@@ -23,3 +23,6 @@ toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.8", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

@@ -34,3 +34,9 @@ jobs:
 
       - name: Audit dependencies
         run: ./scripts/run_audit.sh
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Deny check (advisories)
+        run: cargo deny check --config deny.toml advisories
