@@ -74,7 +74,22 @@
     .metric .n { color: var(--muted); font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.05em; }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .toolbar .spacer { flex: 1 1 auto; }
-    .menu { display: flex; gap: 8px; flex-wrap: wrap; }
+    .menu {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .menu-group {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .menu-group.right {
+      margin-left: auto;
+      justify-content: flex-end;
+    }
     .menu button.active {
       background: linear-gradient(140deg, #1e80e2, #1470d0);
       border-color: #186cc2;
@@ -220,6 +235,9 @@
       }
       .form-grid .form-actions {
         grid-template-columns: 1fr;
+      }
+      .menu-group.right {
+        margin-left: 0;
       }
     }
     .chart {
@@ -367,11 +385,15 @@
 
       <div class="panel" style="margin-bottom: 14px;">
         <div class="menu">
-          <button id="menu-main" class="ghost active" type="button">Main</button>
-          <button id="menu-search" class="ghost" type="button">Search</button>
-          <button id="menu-config" class="ghost" type="button">Config</button>
-          <button id="menu-ingestor" class="ghost" type="button">NSS Ingestor</button>
-          <button id="menu-audit" class="ghost hidden" type="button">Audit</button>
+          <div class="menu-group left">
+            <button id="menu-main" class="ghost active" type="button">Main</button>
+            <button id="menu-search" class="ghost" type="button">Search</button>
+          </div>
+          <div class="menu-group right">
+            <button id="menu-config" class="ghost" type="button">Config</button>
+            <button id="menu-ingestor" class="ghost" type="button">NSS Ingestor</button>
+            <button id="menu-audit" class="ghost hidden" type="button">Audit</button>
+          </div>
         </div>
       </div>
 
