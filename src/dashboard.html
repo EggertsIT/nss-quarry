@@ -141,6 +141,30 @@
     .message { margin: 8px 0 0 0; color: var(--danger); font-size: 0.9rem; min-height: 1.3em; }
     .ok-msg { color: var(--ok); }
     .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+    .top-tables-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: start;
+    }
+    .top-table-card {
+      min-width: 0;
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(174, 197, 226, 0.7);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(246, 250, 255, 0.72)),
+        radial-gradient(220px 130px at 100% -10%, rgba(58, 137, 255, 0.08), transparent 70%);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }
+    .top-table-card h3 {
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+    .top-table-card .table-wrap {
+      max-height: 320px;
+      background: rgba(255, 255, 255, 0.58);
+    }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
     th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; vertical-align: top; }
     th { background: rgba(244, 249, 255, 0.92); color: #2b3a4a; position: sticky; top: 0; z-index: 1; }
@@ -238,6 +262,14 @@
       }
       .menu-group.right {
         margin-left: 0;
+      }
+      .top-tables-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 720px) {
+      .top-tables-grid {
+        grid-template-columns: 1fr;
       }
     }
     .chart {
@@ -424,11 +456,9 @@
         <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
       </div>
 
-      <div class="grid two" style="margin-top: 14px;">
-        <div class="panel">
-          <h3>Top Tables</h3>
-          <div id="top-tables"></div>
-        </div>
+      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+        <h3>Top Tables</h3>
+        <div id="top-tables" class="top-tables-grid"></div>
       </div>
       </div>
 
@@ -948,8 +978,7 @@
       }
       for (const table of tables.filter(t => t && t.name !== "country_flows_24h")) {
         const block = document.createElement("div");
-        block.className = "panel";
-        block.style.marginBottom = "10px";
+        block.className = "top-table-card";
         block.innerHTML = `<h3>${table.name}</h3>`;
         const wrap = document.createElement("div");
         wrap.className = "table-wrap";
