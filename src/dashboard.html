@@ -415,13 +415,6 @@
           <div><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
           <div><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
           <div><label for="limit">Limit</label><input id="limit" type="number" min="1" max="2000" value="200"></div>
-          <div id="mask-ips-wrap" class="hidden">
-            <label for="f-mask-ips">Admin</label>
-            <div style="display:flex; align-items:center; gap:8px; min-height:38px;">
-              <input id="f-mask-ips" type="checkbox" style="width:auto;">
-              <span class="muted">Hide IPs in results and CSV export</span>
-            </div>
-          </div>
           <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
           <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
           <div>
@@ -499,6 +492,31 @@
       <div class="panel" style="margin-top: 14px;">
         <h3>Active Schema Mapping</h3>
         <div id="schema-view"></div>
+      </div>
+      <div id="visibility-panel" class="panel hidden" style="margin-top: 14px;">
+        <h3>Result Visibility Filters (Admin)</h3>
+        <div class="muted" style="margin-bottom:8px;">
+          Exclude rows from Search and CSV export when URL matches regex or source/destination IP matches blocked IP list.
+        </div>
+        <form id="visibility-form" class="form-grid">
+          <div>
+            <label for="vf-url-regex">URL regex rules (one per line)</label>
+            <textarea id="vf-url-regex" rows="8" placeholder="example\\.com/private"></textarea>
+          </div>
+          <div>
+            <label for="vf-blocked-ips">Blocked IPs (one per line)</label>
+            <textarea id="vf-blocked-ips" rows="8" placeholder="1.1.1.1"></textarea>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="vf-save" type="button" class="primary">Save Filters</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="vf-reload" type="button" class="ghost">Reload</button>
+          </div>
+        </form>
+        <div id="visibility-msg" class="message"></div>
       </div>
       </div>
 
@@ -725,11 +743,6 @@
         $("user-label").textContent = "not signed in";
         $("whoami").textContent = "not signed in";
       }
-      const isAdmin = isAdminUser();
-      $("mask-ips-wrap").classList.toggle("hidden", !isAdmin);
-      if (!isAdmin) {
-        $("f-mask-ips").checked = false;
-      }
       syncMenuAccess();
     }
 
@@ -773,6 +786,7 @@
       const isAdmin = isAdminUser();
       $("menu-ingestor").classList.toggle("hidden", !isAdmin);
       $("menu-audit").classList.toggle("hidden", !isAdmin);
+      $("visibility-panel").classList.toggle("hidden", !isAdmin);
       setView(activeView);
     }
 
@@ -1596,7 +1610,6 @@
           department: normalizeFilterValue("f-dept"),
         },
         limit: Number.parseInt($("limit").value, 10) || 200,
-        mask_ips: Boolean(isAdminUser() && $("f-mask-ips").checked),
       };
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
@@ -2018,6 +2031,49 @@
       host.appendChild(details);
     }
 
+    function linesFromTextarea(id) {
+      return String($(id).value || "")
+        .split("\n")
+        .map((v) => v.trim())
+        .filter((v) => v.length > 0);
+    }
+
+    function setTextareaFromLines(id, values) {
+      const list = Array.isArray(values) ? values : [];
+      $(id).value = list.join("\n");
+    }
+
+    async function loadVisibilityFiltersIfAdmin() {
+      if (!isAdminUser()) {
+        setTextareaFromLines("vf-url-regex", []);
+        setTextareaFromLines("vf-blocked-ips", []);
+        setMessage("visibility-msg", "");
+        return;
+      }
+      const data = await apiFetch("/api/admin/visibility-filters", { method: "GET" });
+      setTextareaFromLines("vf-url-regex", data.url_regex || []);
+      setTextareaFromLines("vf-blocked-ips", data.blocked_ips || []);
+      setMessage("visibility-msg", "Visibility filters loaded.", true);
+    }
+
+    async function saveVisibilityFilters() {
+      if (!isAdminUser()) {
+        setMessage("visibility-msg", "Admin role required.");
+        return;
+      }
+      const payload = {
+        url_regex: linesFromTextarea("vf-url-regex"),
+        blocked_ips: linesFromTextarea("vf-blocked-ips"),
+      };
+      const saved = await apiFetch("/api/admin/visibility-filters", {
+        method: "PUT",
+        body: payload,
+      });
+      setTextareaFromLines("vf-url-regex", saved.url_regex || []);
+      setTextareaFromLines("vf-blocked-ips", saved.blocked_ips || []);
+      setMessage("visibility-msg", "Visibility filters saved.", true);
+    }
+
     async function loadAuditIfAdmin() {
       if (!isAdminUser()) {
         return;
@@ -2066,6 +2122,7 @@
       }
       if (isAdminUser()) {
         tasks.push(loadAuditIfAdmin());
+        tasks.push(loadVisibilityFiltersIfAdmin());
       }
       await Promise.all(tasks);
     }
@@ -2125,7 +2182,16 @@
           }
         }
       });
-      $("menu-config").addEventListener("click", () => setView("config"));
+      $("menu-config").addEventListener("click", async () => {
+        setView("config");
+        if (isAdminUser()) {
+          try {
+            await loadVisibilityFiltersIfAdmin();
+          } catch (err) {
+            setMessage("visibility-msg", err.message || "Failed to load visibility filters.");
+          }
+        }
+      });
       $("menu-ingestor").addEventListener("click", async () => {
         setView("ingestor");
         try {
@@ -2216,6 +2282,20 @@
       });
       $("export-csv").addEventListener("click", async () => {
         try { await exportCsv(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }
+      });
+      $("vf-save").addEventListener("click", async () => {
+        try {
+          await saveVisibilityFilters();
+        } catch (err) {
+          setMessage("visibility-msg", err.message || "Failed to save visibility filters.");
+        }
+      });
+      $("vf-reload").addEventListener("click", async () => {
+        try {
+          await loadVisibilityFiltersIfAdmin();
+        } catch (err) {
+          setMessage("visibility-msg", err.message || "Failed to load visibility filters.");
+        }
       });
 
       const isAuthed = await checkSession();

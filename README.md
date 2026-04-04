@@ -115,6 +115,7 @@ cp config.example.toml config.toml
 - field mapping in `data.fields` (fresh-install defaults are aligned to `nss-to-parquet` `zscaler_web_v2_ops`, including `user_field="login"` and `url_field="url"`).
   - `response_code_field` and `reason_field` drive quick filters in Search Logs (defaults: `respcode`, `reason`).
   - include `source_country_field` / `destination_country_field` for global flow map rendering (defaults: `srcip_country`, `dstip_country`).
+- admin visibility filters are managed in the Dashboard `Config` tab and persisted at `/var/lib/nss-quarry/visibility_filters.json` (derived from `audit.path` directory).
 - `auth.mode`
 - auth settings for the chosen mode.
 - ingestor control settings:
@@ -165,6 +166,8 @@ cargo run -- run --config ./config.toml
 - `GET /api/dashboards/{name}`
 - `GET /api/audit` (admin only, server-side pagination and filtering)
 - `GET /api/audit/export/csv` (admin only, filter-aware export; capped to 50k rows)
+- `GET /api/admin/visibility-filters` (admin only; returns URL regex + blocked IP exclusion rules)
+- `PUT /api/admin/visibility-filters` (admin only; updates and persists exclusion rules)
 - `POST /api/admin/ingestor/force-finalize-open-files` (admin only; calls `nss-ingestor` force-finalize API and writes audit event with actor/time/source IP)
 
 `/api/audit` query parameters:

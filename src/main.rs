@@ -6,7 +6,7 @@ mod pcap;
 mod query;
 mod webui;
 
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -34,7 +34,7 @@ use crate::models::{
     PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
 use crate::pcap::analyze_pcap_file;
-use crate::query::QueryService;
+use crate::query::{QueryService, VisibilityFilters};
 use crate::webui::render_dashboard_html;
 
 #[derive(Parser, Debug)]
@@ -68,6 +68,7 @@ struct AppState {
     audit: AuditLogger,
     query: QueryService,
     ingestor_client: reqwest::Client,
+    visibility_filters_path: PathBuf,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -118,6 +119,9 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let cfg = Arc::new(AppConfig::load(&config_path)?);
     let auth = AuthManager::new(&cfg.auth).await?;
     let query = QueryService::new(&cfg)?;
+    let visibility_filters_path = visibility_filters_path_for_config(&cfg);
+    let visibility_filters = load_visibility_filters(&visibility_filters_path).await?;
+    query.set_visibility_filters(visibility_filters.clone())?;
     let audit = AuditLogger::new(&cfg.audit).await?;
     let ingestor_client = reqwest::Client::builder()
         .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
@@ -129,7 +133,13 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         audit,
         query,
         ingestor_client,
+        visibility_filters_path,
     };
+    info!(
+        rules_url_regex = visibility_filters.url_regex.len(),
+        rules_blocked_ips = visibility_filters.blocked_ips.len(),
+        "loaded visibility filters"
+    );
 
     let app = build_router(state);
 
@@ -164,6 +174,10 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
+        .route(
+            "/api/admin/visibility-filters",
+            get(api_admin_visibility_filters_get).put(api_admin_visibility_filters_put),
+        )
         .route("/api/audit", get(api_audit))
         .route("/api/audit/export/csv", get(api_audit_export_csv))
         .with_state(state)
@@ -684,6 +698,110 @@ async fn api_schema(
         helpdesk_mask_fields: state.cfg.security.helpdesk_mask_fields.clone(),
         generated_at: Utc::now(),
     }))
+}
+
+async fn api_admin_visibility_filters_get(
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> Result<Json<VisibilityFilters>, AppError> {
+    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let rules = state
+        .query
+        .visibility_filters()
+        .map_err(AppError::internal)?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.visibility_filters.read".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "url_regex_rules": rules.url_regex.len(),
+                "blocked_ip_rules": rules.blocked_ips.len(),
+            }),
+        })
+        .await;
+    Ok(Json(rules))
+}
+
+async fn api_admin_visibility_filters_put(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Json(rules): Json<VisibilityFilters>,
+) -> Result<Json<VisibilityFilters>, AppError> {
+    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    state
+        .query
+        .set_visibility_filters(rules.clone())
+        .map_err(AppError::bad_request)?;
+    let persisted = state
+        .query
+        .visibility_filters()
+        .map_err(AppError::internal)?;
+    save_visibility_filters(&state.visibility_filters_path, &persisted)
+        .await
+        .map_err(AppError::internal)?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.visibility_filters.update".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "url_regex_rules": persisted.url_regex.len(),
+                "blocked_ip_rules": persisted.blocked_ips.len(),
+                "path": state.visibility_filters_path,
+            }),
+        })
+        .await;
+    Ok(Json(persisted))
+}
+
+fn visibility_filters_path_for_config(cfg: &AppConfig) -> PathBuf {
+    cfg.audit
+        .path
+        .parent()
+        .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"))
+        .join("visibility_filters.json")
+}
+
+async fn load_visibility_filters(path: &FsPath) -> Result<VisibilityFilters> {
+    let raw = match tokio::fs::read_to_string(path).await {
+        Ok(v) => v,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(VisibilityFilters::default());
+        }
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed reading {}", path.display()));
+        }
+    };
+    if raw.trim().is_empty() {
+        return Ok(VisibilityFilters::default());
+    }
+    serde_json::from_str(&raw)
+        .with_context(|| format!("failed parsing visibility filters {}", path.display()))
+}
+
+async fn save_visibility_filters(path: &FsPath, filters: &VisibilityFilters) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed creating {}", parent.display()))?;
+    }
+    let tmp = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    let payload =
+        serde_json::to_vec_pretty(filters).context("failed encoding visibility filters")?;
+    tokio::fs::write(&tmp, payload)
+        .await
+        .with_context(|| format!("failed writing {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("failed replacing {}", path.display()))?;
+    Ok(())
 }
 
 fn detect_parquet_columns(root: &std::path::Path) -> (Vec<ParquetColumnInfo>, Option<String>) {
@@ -1248,6 +1366,10 @@ mod security_tests {
         let cfg = test_config();
         let auth = AuthManager::new(&cfg.auth).await.expect("auth manager");
         let query = QueryService::new(&cfg).expect("query service");
+        let visibility_filters_path = visibility_filters_path_for_config(&cfg);
+        query
+            .set_visibility_filters(VisibilityFilters::default())
+            .expect("set default visibility filters");
         let audit = AuditLogger::new(&cfg.audit).await.expect("audit logger");
         let ingestor_client = reqwest::Client::builder()
             .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
@@ -1259,6 +1381,7 @@ mod security_tests {
             audit,
             query,
             ingestor_client,
+            visibility_filters_path,
         })
     }
 

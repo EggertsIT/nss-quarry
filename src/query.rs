@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -18,11 +19,27 @@ pub struct QueryService {
     inner: Arc<QueryInner>,
 }
 
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct VisibilityFilters {
+    #[serde(default)]
+    pub url_regex: Vec<String>,
+    #[serde(default)]
+    pub blocked_ips: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompiledVisibilityFilters {
+    raw: VisibilityFilters,
+    compiled_url_regex: Vec<Regex>,
+    blocked_ip_set: HashSet<String>,
+}
+
 struct QueryInner {
     parquet_root: PathBuf,
     fields: FieldMap,
     default_columns: Vec<String>,
     helpdesk_mask_fields: Vec<String>,
+    visibility_filters: RwLock<CompiledVisibilityFilters>,
     input_value_re: Regex,
     max_days_per_query: i64,
     default_limit: u32,
@@ -40,6 +57,7 @@ impl QueryService {
                 fields: cfg.data.fields.clone(),
                 default_columns: cfg.query.default_columns.clone(),
                 helpdesk_mask_fields: cfg.security.helpdesk_mask_fields.clone(),
+                visibility_filters: RwLock::new(CompiledVisibilityFilters::default()),
                 input_value_re,
                 max_days_per_query: cfg.query.max_days_per_query,
                 default_limit: cfg.query.default_limit,
@@ -83,6 +101,26 @@ impl QueryService {
             .await
             .map_err(|_| anyhow::anyhow!("dashboard query timed out"))?
             .context("dashboard worker failed")?
+    }
+
+    pub fn visibility_filters(&self) -> Result<VisibilityFilters> {
+        let guard = self
+            .inner
+            .visibility_filters
+            .read()
+            .map_err(|_| anyhow::anyhow!("visibility filters lock poisoned"))?;
+        Ok(guard.raw.clone())
+    }
+
+    pub fn set_visibility_filters(&self, filters: VisibilityFilters) -> Result<()> {
+        let compiled = compile_visibility_filters(filters)?;
+        let mut guard = self
+            .inner
+            .visibility_filters
+            .write()
+            .map_err(|_| anyhow::anyhow!("visibility filters lock poisoned"))?;
+        *guard = compiled;
+        Ok(())
     }
 
     fn search_sync(&self, req: SearchRequest, role: RoleName) -> Result<SearchResponse> {
@@ -138,12 +176,13 @@ impl QueryService {
             out.push(map);
         }
 
-        if req.mask_ips {
-            if role != RoleName::Admin {
-                anyhow::bail!("mask_ips is admin-only");
-            }
-            apply_admin_ip_masking(&mut out, &self.inner.fields);
-        }
+        let visibility_filters = self
+            .inner
+            .visibility_filters
+            .read()
+            .map_err(|_| anyhow::anyhow!("visibility filters lock poisoned"))?
+            .clone();
+        apply_visibility_filters(&mut out, &self.inner.fields, &visibility_filters);
 
         if role == RoleName::Helpdesk {
             apply_helpdesk_masking(&mut out, &self.inner.helpdesk_mask_fields);
@@ -688,35 +727,122 @@ fn apply_helpdesk_masking(
     }
 }
 
-fn apply_admin_ip_masking(
-    rows: &mut [serde_json::Map<String, serde_json::Value>],
+fn compile_visibility_filters(raw: VisibilityFilters) -> Result<CompiledVisibilityFilters> {
+    const MAX_RULES: usize = 500;
+    const MAX_RULE_LEN: usize = 256;
+
+    if raw.url_regex.len() > MAX_RULES {
+        anyhow::bail!("too many URL regex rules (max {MAX_RULES})");
+    }
+    if raw.blocked_ips.len() > MAX_RULES {
+        anyhow::bail!("too many blocked IP rules (max {MAX_RULES})");
+    }
+
+    let mut normalized = VisibilityFilters::default();
+    let mut compiled_url_regex = Vec::new();
+    for pattern in raw.url_regex {
+        let rule = pattern.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        if rule.len() > MAX_RULE_LEN {
+            anyhow::bail!("URL regex rule exceeds {MAX_RULE_LEN} characters");
+        }
+        let compiled =
+            Regex::new(rule).map_err(|err| anyhow::anyhow!("invalid URL regex '{rule}': {err}"))?;
+        normalized.url_regex.push(rule.to_string());
+        compiled_url_regex.push(compiled);
+    }
+
+    let mut blocked_ip_set = HashSet::new();
+    for value in raw.blocked_ips {
+        let rule = value.trim();
+        if rule.is_empty() {
+            continue;
+        }
+        if rule.len() > MAX_RULE_LEN {
+            anyhow::bail!("IP rule exceeds {MAX_RULE_LEN} characters");
+        }
+        let ip = rule
+            .parse::<IpAddr>()
+            .map_err(|_| anyhow::anyhow!("invalid IP rule '{rule}'"))?;
+        let canonical = ip.to_string().to_lowercase();
+        blocked_ip_set.insert(canonical.clone());
+        normalized.blocked_ips.push(canonical);
+    }
+    normalized.url_regex.sort();
+    normalized.url_regex.dedup();
+    normalized.blocked_ips.sort();
+    normalized.blocked_ips.dedup();
+
+    Ok(CompiledVisibilityFilters {
+        raw: normalized,
+        compiled_url_regex,
+        blocked_ip_set,
+    })
+}
+
+fn apply_visibility_filters(
+    rows: &mut Vec<serde_json::Map<String, serde_json::Value>>,
     fields: &FieldMap,
+    filters: &CompiledVisibilityFilters,
 ) {
-    let mut ip_fields = HashSet::new();
-    ip_fields.insert(fields.source_ip_field.clone());
-    ip_fields.insert(fields.server_ip_field.clone());
-    for field in [
+    if filters.compiled_url_regex.is_empty() && filters.blocked_ip_set.is_empty() {
+        return;
+    }
+    rows.retain(|row| !row_matches_visibility_filter(row, fields, filters));
+}
+
+fn row_matches_visibility_filter(
+    row: &serde_json::Map<String, serde_json::Value>,
+    fields: &FieldMap,
+    filters: &CompiledVisibilityFilters,
+) -> bool {
+    if !filters.compiled_url_regex.is_empty()
+        && let Some(url) = row_string(row, &[&fields.url_field, "url", "eurl"])
+    {
+        for re in &filters.compiled_url_regex {
+            if re.is_match(url) {
+                return true;
+            }
+        }
+    }
+
+    if filters.blocked_ip_set.is_empty() {
+        return false;
+    }
+    [
+        fields.source_ip_field.as_str(),
+        fields.server_ip_field.as_str(),
+    ]
+    .into_iter()
+    .chain([
         "cip",
         "cintip",
         "cpubip",
         "sip",
         "source_ip",
         "destination_ip",
-        "server_ip",
-        "src_ip",
-        "dst_ip",
-    ] {
-        ip_fields.insert(field.to_string());
-    }
-    for row in rows {
-        for key in &ip_fields {
-            if let Some(value) = row.get_mut(key)
-                && !value.is_null()
-            {
-                *value = serde_json::Value::String("[HIDDEN_BY_ADMIN]".to_string());
-            }
-        }
-    }
+    ])
+    .any(|column| {
+        row.get(column)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .map(|v| filters.blocked_ip_set.contains(&v.to_lowercase()))
+            .unwrap_or(false)
+    })
+}
+
+fn row_string<'a>(
+    row: &'a serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<&'a str> {
+    keys.iter().find_map(|k| {
+        row.get(*k)
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    })
 }
 
 fn validate_time_window(from: DateTime<Utc>, to: DateTime<Utc>, max_days: i64) -> Result<()> {
@@ -967,7 +1093,6 @@ mod tests {
             },
             limit: Some(123),
             columns: Some(vec!["time".to_string(), "url".to_string()]),
-            mask_ips: false,
         };
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
@@ -999,7 +1124,6 @@ mod tests {
             },
             limit: Some(50),
             columns: Some(vec!["time".to_string(), "sip".to_string()]),
-            mask_ips: false,
         };
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
@@ -1048,7 +1172,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_admin_ip_masking_masks_common_ip_columns() {
+    fn apply_visibility_filters_hides_rows_on_url_or_ip_rule_match() {
         let mut row = serde_json::Map::new();
         row.insert(
             "cip".to_string(),
@@ -1062,13 +1186,40 @@ mod tests {
             "url".to_string(),
             serde_json::Value::String("example.com".to_string()),
         );
-        let mut rows = vec![row];
+        let mut safe_row = serde_json::Map::new();
+        safe_row.insert(
+            "cip".to_string(),
+            serde_json::Value::String("10.0.0.11".to_string()),
+        );
+        safe_row.insert(
+            "sip".to_string(),
+            serde_json::Value::String("8.8.4.4".to_string()),
+        );
+        safe_row.insert(
+            "url".to_string(),
+            serde_json::Value::String("safe.example.com".to_string()),
+        );
+        let mut rows = vec![row, safe_row];
         let fields = FieldMap::default();
+        let compiled = compile_visibility_filters(VisibilityFilters {
+            url_regex: vec!["^example\\.com$".to_string()],
+            blocked_ips: vec!["10.0.0.10".to_string()],
+        })
+        .expect("compile visibility filters");
 
-        apply_admin_ip_masking(&mut rows, &fields);
+        apply_visibility_filters(&mut rows, &fields, &compiled);
 
-        assert_eq!(rows[0]["cip"], "[HIDDEN_BY_ADMIN]");
-        assert_eq!(rows[0]["sip"], "[HIDDEN_BY_ADMIN]");
-        assert_eq!(rows[0]["url"], "example.com");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["url"], "safe.example.com");
+    }
+
+    #[test]
+    fn compile_visibility_filters_rejects_invalid_ip() {
+        let err = compile_visibility_filters(VisibilityFilters {
+            url_regex: Vec::new(),
+            blocked_ips: vec!["not-an-ip".to_string()],
+        })
+        .expect_err("must reject invalid ip");
+        assert!(err.to_string().contains("invalid IP rule"));
     }
 }

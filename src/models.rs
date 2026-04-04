@@ -29,8 +29,6 @@ pub struct SearchRequest {
     pub filters: SearchFilters,
     pub limit: Option<u32>,
     pub columns: Option<Vec<String>>,
-    #[serde(default)]
-    pub mask_ips: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
