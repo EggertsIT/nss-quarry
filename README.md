@@ -163,6 +163,37 @@ cargo run -- run --config ./config.toml
 - For enterprise SSO design, role claim strategy, and troubleshooting:
   - `docs/oidc-setup.md`
 
+## Security Policy and Pentest
+
+- Security policy and release verification:
+  - `SECURITY.md`
+- Latest internal penetration test report:
+  - `pentest.md`
+
+## Dependency Audit Policy
+
+Run local dependency audit with project allowlist:
+
+```bash
+cargo install cargo-audit --locked
+./scripts/run_audit.sh
+```
+
+Current temporary allowlist entries are documented in:
+- `audit-allowlist.txt`
+
+## Signed Release Artifacts
+
+Tag releases (`v*`) produce:
+- Linux binary (`nss-quarry-linux-x86_64`)
+- SHA-256 checksums
+- keyless `cosign` signature + certificate
+- CycloneDX SBOM (`sbom.cdx.json`)
+
+CI workflows:
+- `.github/workflows/ci.yml`
+- `.github/workflows/release-artifacts.yml`
+
 ## Troubleshooting
 
 If queries fail with:

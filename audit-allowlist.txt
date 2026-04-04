@@ -1,0 +1,5 @@
+# Cargo audit allowlist for temporary exceptions.
+# Keep this list minimal and remove entries as soon as upstream fixes/migrations land.
+
+RUSTSEC-2023-0071
+RUSTSEC-2025-0134

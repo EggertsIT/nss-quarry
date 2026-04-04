@@ -27,10 +27,10 @@ impl AuditLogger {
         let rotate_max_bytes = cfg.rotate_max_bytes;
         let rotate_max_files = cfg.rotate_max_files;
         tokio::spawn(async move {
-            if retention_days > 0 {
-                if let Err(err) = cleanup_retention(&path, retention_days).await {
-                    warn!(error = %err, "failed initial cleanup of old audit logs");
-                }
+            if retention_days > 0
+                && let Err(err) = cleanup_retention(&path, retention_days).await
+            {
+                warn!(error = %err, "failed initial cleanup of old audit logs");
             }
             let mut events_since_cleanup: u64 = 0;
             while let Some(event) = rx.recv().await {
@@ -40,10 +40,11 @@ impl AuditLogger {
                     warn!(error = %err, "failed writing audit event");
                 }
                 events_since_cleanup = events_since_cleanup.saturating_add(1);
-                if retention_days > 0 && events_since_cleanup >= 200 {
-                    if let Err(err) = cleanup_retention(&path, retention_days).await {
-                        warn!(error = %err, "failed cleanup of old audit logs");
-                    }
+                if retention_days > 0
+                    && events_since_cleanup >= 200
+                    && let Err(err) = cleanup_retention(&path, retention_days).await
+                {
+                    warn!(error = %err, "failed cleanup of old audit logs");
                 }
                 if events_since_cleanup >= 200 {
                     events_since_cleanup = 0;
