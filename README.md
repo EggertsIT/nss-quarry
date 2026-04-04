@@ -87,6 +87,7 @@ Do not use `--demo-users` in production.
 
 See full details:
 - `docs/install-https.md`
+- `docs/servicenow-integration.md` (experimental ServiceNow workflow design)
 
 ## Uninstall
 
@@ -155,6 +156,7 @@ cargo run -- run --config ./config.toml
 
 Full API reference with Python examples:
 - `docs/api.md`
+- `docs/servicenow-integration.md` (experimental ServiceNow integration pattern)
 
 - `GET /healthz`
 - `GET /readyz`
