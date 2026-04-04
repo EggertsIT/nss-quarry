@@ -18,6 +18,8 @@ Include:
 - Keep HTTPS enabled and `auth.secure_cookie = true` in production.
 - Keep `security.max_query_window_hours` constrained (default: 168h / 7d).
 - Keep audit logging enabled and protect audit files via filesystem permissions.
+- Trust `X-Forwarded-For` / `X-Real-IP` only from a loopback reverse proxy on the same host.
+- PCAP uploads are staged in an app-owned private temp directory; keep that directory on local trusted storage.
 - Restrict ingestor dashboard passthrough (`/ingestor/*`) to admin-only users.
 
 ## Current Assessment

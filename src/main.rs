@@ -9,11 +9,12 @@ mod webui;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use std::{fs::OpenOptions as StdOpenOptions, net::SocketAddr};
 
 use anyhow::{Context, Result};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
-use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -36,6 +37,9 @@ use crate::models::{
 use crate::pcap::analyze_pcap_file;
 use crate::query::{QueryService, VisibilityFilters};
 use crate::webui::render_dashboard_html;
+
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 #[derive(Parser, Debug)]
 #[command(name = "nss-quarry")]
@@ -147,7 +151,11 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         .await
         .with_context(|| format!("failed binding to {}", cfg.server.bind_addr))?;
     info!(bind = %cfg.server.bind_addr, "nss-quarry listening");
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -334,10 +342,11 @@ async fn authz_ingestor(
 async fn api_admin_ingestor_force_finalize_open_files(
     State(state): State<AppState>,
     jar: CookieJar,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     let user = require_user(&state, &jar, RoleName::Admin).await?;
-    let source_ip = extract_source_ip(&headers);
+    let source_ip = extract_source_ip(&headers, Some(peer));
     let url = format!(
         "{}/api/admin/force-finalize-open-files",
         state.cfg.ingestor.base_url.trim_end_matches('/')
@@ -487,11 +496,7 @@ async fn api_pcap_analyze(
         match field_name.as_str() {
             "pcap" => {
                 file_name = field.file_name().map(|v| v.to_string());
-                let path = std::env::temp_dir()
-                    .join(format!("nss-quarry-upload-{}.pcap", uuid::Uuid::new_v4()));
-                let mut file = tokio::fs::File::create(&path)
-                    .await
-                    .map_err(AppError::internal)?;
+                let (path, mut file) = create_private_upload_file(&state).await?;
                 let mut size = 0_u64;
                 while let Some(chunk) = field.chunk().await.map_err(AppError::bad_request)? {
                     size = size.saturating_add(chunk.len() as u64);
@@ -1213,23 +1218,62 @@ fn csv_escape_audit(value: &str) -> String {
     }
 }
 
-fn extract_source_ip(headers: &HeaderMap) -> Option<String> {
-    if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        let first = forwarded
-            .split(',')
-            .next()
+async fn create_private_upload_file(
+    state: &AppState,
+) -> Result<(PathBuf, tokio::fs::File), AppError> {
+    let parent = state
+        .cfg
+        .audit
+        .path
+        .parent()
+        .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"));
+    let dir = parent.join("tmp");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(AppError::internal)?;
+    #[cfg(unix)]
+    tokio::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+        .await
+        .map_err(AppError::internal)?;
+
+    let path = dir.join(format!("nss-quarry-upload-{}.pcap", uuid::Uuid::new_v4()));
+    let mut options = StdOpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options.open(&path).map_err(AppError::internal)?;
+    Ok((path, tokio::fs::File::from_std(file)))
+}
+
+fn extract_source_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<String> {
+    if let Some(peer) = peer
+        && !peer.ip().is_loopback()
+    {
+        return Some(peer.ip().to_string());
+    }
+
+    if peer.is_some() {
+        if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            let first = forwarded
+                .split(',')
+                .next()
+                .map(str::trim)
+                .unwrap_or_default();
+            if !first.is_empty() {
+                return Some(first.to_string());
+            }
+        }
+        if let Some(real_ip) = headers
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
             .map(str::trim)
-            .unwrap_or_default();
-        if !first.is_empty() {
-            return Some(first.to_string());
+            .filter(|v| !v.is_empty())
+        {
+            return Some(real_ip.to_string());
         }
     }
-    headers
-        .get("x-real-ip")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToString::to_string)
+
+    peer.map(|addr| addr.ip().to_string())
 }
 
 async fn require_user(
@@ -1314,9 +1358,11 @@ impl IntoResponse for AppError {
 
 #[cfg(test)]
 mod security_tests {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
     use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
     use axum::body::Body;
-    use axum::http::{Request, StatusCode, header};
+    use axum::http::{HeaderMap, HeaderValue, Request, StatusCode, header};
     use tower::ServiceExt;
     use uuid::Uuid;
 
@@ -1426,11 +1472,17 @@ mod security_tests {
         let res_audit = app.clone().oneshot(req_audit).await.expect("response");
         assert_eq!(res_audit.status(), StatusCode::UNAUTHORIZED);
 
-        let req_finalize = Request::builder()
+        let mut req_finalize = Request::builder()
             .method("POST")
             .uri("/api/admin/ingestor/force-finalize-open-files")
             .body(Body::empty())
             .expect("request");
+        req_finalize
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                8080,
+            )));
         let res_finalize = app.clone().oneshot(req_finalize).await.expect("response");
         assert_eq!(res_finalize.status(), StatusCode::UNAUTHORIZED);
 
@@ -1455,12 +1507,18 @@ mod security_tests {
         let res = app.clone().oneshot(req).await.expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
-        let req_finalize = Request::builder()
+        let mut req_finalize = Request::builder()
             .method("POST")
             .uri("/api/admin/ingestor/force-finalize-open-files")
             .header(header::COOKIE, cookie)
             .body(Body::empty())
             .expect("request");
+        req_finalize
+            .extensions_mut()
+            .insert(ConnectInfo(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::LOCALHOST),
+                8080,
+            )));
         let res_finalize = app.clone().oneshot(req_finalize).await.expect("response");
         assert_eq!(res_finalize.status(), StatusCode::FORBIDDEN);
     }
@@ -1567,5 +1625,29 @@ mod security_tests {
             .expect("request");
         let res_put = app.clone().oneshot(req_put).await.expect("response");
         assert_eq!(res_put.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn source_ip_ignores_forwarded_headers_for_non_loopback_peers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", HeaderValue::from_static("203.0.113.9"));
+        headers.insert("x-real-ip", HeaderValue::from_static("203.0.113.10"));
+
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)), 44321);
+        let source = extract_source_ip(&headers, Some(peer));
+        assert_eq!(source.as_deref(), Some("198.51.100.7"));
+    }
+
+    #[test]
+    fn source_ip_trusts_forwarded_headers_for_loopback_proxy_peer() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.9, 127.0.0.1"),
+        );
+
+        let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
+        let source = extract_source_ip(&headers, Some(peer));
+        assert_eq!(source.as_deref(), Some("203.0.113.9"));
     }
 }
