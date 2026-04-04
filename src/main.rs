@@ -1433,6 +1433,13 @@ mod security_tests {
             .expect("request");
         let res_finalize = app.clone().oneshot(req_finalize).await.expect("response");
         assert_eq!(res_finalize.status(), StatusCode::UNAUTHORIZED);
+
+        let req_visibility = Request::builder()
+            .uri("/api/admin/visibility-filters")
+            .body(Body::empty())
+            .expect("request");
+        let res_visibility = app.clone().oneshot(req_visibility).await.expect("response");
+        assert_eq!(res_visibility.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1456,6 +1463,30 @@ mod security_tests {
             .expect("request");
         let res_finalize = app.clone().oneshot(req_finalize).await.expect("response");
         assert_eq!(res_finalize.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn helpdesk_cannot_access_visibility_filters_admin_api() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "helpdesk", "helpdesk").await;
+
+        let req_get = Request::builder()
+            .uri("/api/admin/visibility-filters")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("request");
+        let res_get = app.clone().oneshot(req_get).await.expect("response");
+        assert_eq!(res_get.status(), StatusCode::FORBIDDEN);
+
+        let req_put = Request::builder()
+            .method("PUT")
+            .uri("/api/admin/visibility-filters")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"url_regex":[],"blocked_ips":["1.1.1.1"]}"#))
+            .expect("request");
+        let res_put = app.clone().oneshot(req_put).await.expect("response");
+        assert_eq!(res_put.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -1492,5 +1523,49 @@ mod security_tests {
             .expect("request");
         let res_audit = app.clone().oneshot(req_audit).await.expect("response");
         assert_eq!(res_audit.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_can_read_and_update_visibility_filters() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "admin", "admin").await;
+
+        let req_get = Request::builder()
+            .uri("/api/admin/visibility-filters")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("request");
+        let res_get = app.clone().oneshot(req_get).await.expect("response");
+        assert_eq!(res_get.status(), StatusCode::OK);
+
+        let req_put = Request::builder()
+            .method("PUT")
+            .uri("/api/admin/visibility-filters")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"url_regex":["^blocked\\.example\\.com$"],"blocked_ips":["1.1.1.1"]}"#,
+            ))
+            .expect("request");
+        let res_put = app.clone().oneshot(req_put).await.expect("response");
+        assert_eq!(res_put.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_visibility_filter_update_rejects_invalid_ip() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "admin", "admin").await;
+
+        let req_put = Request::builder()
+            .method("PUT")
+            .uri("/api/admin/visibility-filters")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"url_regex":[],"blocked_ips":["not-an-ip"]}"#,
+            ))
+            .expect("request");
+        let res_put = app.clone().oneshot(req_put).await.expect("response");
+        assert_eq!(res_put.status(), StatusCode::BAD_REQUEST);
     }
 }
