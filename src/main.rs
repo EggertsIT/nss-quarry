@@ -13,13 +13,14 @@ use std::{fs::OpenOptions as StdOpenOptions, net::SocketAddr};
 
 use anyhow::{Context, Result};
 use argon2::Argon2;
-use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng, rand_core::RngCore};
 use axum::extract::{ConnectInfo, DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use axum_extra::extract::CookieJar;
+use base64::Engine;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
@@ -63,6 +64,10 @@ enum Command {
         #[arg(long)]
         password: String,
     },
+    GenerateApiToken {
+        #[arg(long, default_value = "svc_servicenow_analyst")]
+        name: String,
+    },
 }
 
 #[derive(Clone)]
@@ -99,15 +104,40 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Command::HashPassword { password } => {
-            let salt = SaltString::generate(&mut OsRng);
-            let hash = Argon2::default()
-                .hash_password(password.as_bytes(), &salt)
-                .map_err(|_| anyhow::anyhow!("failed to hash password"))?
-                .to_string();
+            let hash = hash_secret(&password)?;
             println!("{hash}");
             Ok(())
         }
+        Command::GenerateApiToken { name } => {
+            let token = generate_api_token_secret();
+            let hash = hash_secret(&token)?;
+            println!("token={token}");
+            println!("token_hash={hash}");
+            println!();
+            println!("Add this to config.toml:");
+            println!("[[auth.api_tokens.tokens]]");
+            println!("name = {:?}", name);
+            println!("token_hash = {:?}", hash);
+            println!("role = \"analyst\"");
+            println!("disabled = false");
+            Ok(())
+        }
     }
+}
+
+fn hash_secret(secret: &str) -> Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(secret.as_bytes(), &salt)
+        .map_err(|_| anyhow::anyhow!("failed to hash secret"))?
+        .to_string();
+    Ok(hash)
+}
+
+fn generate_api_token_secret() -> String {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
 fn init_tracing() {
@@ -326,26 +356,29 @@ async fn auth_logout(
 async fn api_me(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<AuthResponse>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
     Ok(Json(AuthResponse { user }))
 }
 
 async fn authz_ingestor(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
-    let _ = require_user(&state, &jar, RoleName::Admin).await?;
+    let _ = require_user(&state, &jar, &headers, RoleName::Admin).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn api_admin_ingestor_force_finalize_open_files(
     State(state): State<AppState>,
     jar: CookieJar,
+    auth_headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let user = require_user(&state, &jar, &auth_headers, RoleName::Admin).await?;
     let source_ip = extract_source_ip(&headers, Some(peer));
     let url = format!(
         "{}/api/admin/force-finalize-open-files",
@@ -403,9 +436,10 @@ async fn api_admin_ingestor_force_finalize_open_files(
 async fn api_search(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<crate::models::SearchResponse>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
     let result = state
         .query
         .search(req.clone(), user.role)
@@ -431,9 +465,10 @@ async fn api_search(
 async fn api_export_csv(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Json(req): Json<SearchRequest>,
 ) -> Result<Response, AppError> {
-    let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
     let csv = state
         .query
         .export_csv(req.clone(), user.role)
@@ -479,9 +514,10 @@ fn pcap_upload_body_limit() -> usize {
 async fn api_pcap_analyze(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<PcapAnalyzeResponse>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
     let mut file_name: Option<String> = None;
     let mut pcap_path: Option<PathBuf> = None;
     let mut uploaded_bytes: u64 = 0;
@@ -592,9 +628,10 @@ async fn api_pcap_analyze(
 async fn api_dashboard(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<crate::models::DashboardResponse>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
     let data = state
         .query
         .dashboard(&name, user.role)
@@ -617,8 +654,9 @@ async fn api_dashboard(
 async fn api_schema(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<SchemaResponse>, AppError> {
-    let _user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let _user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
     let fields = vec![
         SchemaFieldInfo {
             name: "time_field".to_string(),
@@ -708,8 +746,9 @@ async fn api_schema(
 async fn api_admin_visibility_filters_get(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
 ) -> Result<Json<VisibilityFilters>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
     let rules = state
         .query
         .visibility_filters()
@@ -734,9 +773,10 @@ async fn api_admin_visibility_filters_get(
 async fn api_admin_visibility_filters_put(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Json(rules): Json<VisibilityFilters>,
 ) -> Result<Json<VisibilityFilters>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
     state
         .query
         .set_visibility_filters(rules.clone())
@@ -931,9 +971,10 @@ impl Default for AuditListQuery {
 async fn api_audit(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Query(query): Query<AuditListQuery>,
 ) -> Result<Json<AuditListResponse>, AppError> {
-    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query
         .page_size
@@ -981,9 +1022,10 @@ async fn api_audit(
 async fn api_audit_export_csv(
     State(state): State<AppState>,
     jar: CookieJar,
+    headers: HeaderMap,
     Query(query): Query<AuditListQuery>,
 ) -> Result<Response, AppError> {
-    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
     let filtered = load_filtered_audit_events(&state.cfg.audit.path, &query)
         .await
         .map_err(AppError::internal)?;
@@ -1279,13 +1321,17 @@ fn extract_source_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> Option<St
 async fn require_user(
     state: &AppState,
     jar: &CookieJar,
+    headers: &HeaderMap,
     min_role: RoleName,
 ) -> Result<crate::models::AuthUser, AppError> {
-    let user = state
-        .auth
-        .resolve_user_from_cookie(jar)
-        .await
-        .ok_or_else(|| AppError::unauthorized(anyhow::anyhow!("authentication required")))?;
+    let user = if let Some(user) = state.auth.resolve_user_from_cookie(jar).await {
+        user
+    } else {
+        state
+            .auth
+            .resolve_user_from_api_token_header(headers)
+            .ok_or_else(|| AppError::unauthorized(anyhow::anyhow!("authentication required")))?
+    };
     if !has_min_role(&user, min_role) {
         return Err(AppError::forbidden("insufficient role"));
     }
@@ -1367,13 +1413,21 @@ mod security_tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::config::LocalUser;
+    use crate::config::{ApiTokenConfig, LocalUser};
 
     fn hash_password(password: &str) -> String {
         let salt = SaltString::generate(&mut OsRng);
         Argon2::default()
             .hash_password(password.as_bytes(), &salt)
             .expect("password hash")
+            .to_string()
+    }
+
+    fn hash_secret(secret: &str) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(secret.as_bytes(), &salt)
+            .expect("secret hash")
             .to_string()
     }
 
@@ -1396,6 +1450,20 @@ mod security_tests {
                 username: "helpdesk".to_string(),
                 password_hash: hash_password("helpdesk"),
                 role: RoleName::Helpdesk,
+                disabled: false,
+            },
+        ];
+        cfg.auth.api_tokens.tokens = vec![
+            ApiTokenConfig {
+                name: "svc-analyst".to_string(),
+                token_hash: hash_secret("analyst-token"),
+                role: RoleName::Analyst,
+                disabled: false,
+            },
+            ApiTokenConfig {
+                name: "svc-admin".to_string(),
+                token_hash: hash_secret("admin-token"),
+                role: RoleName::Admin,
                 disabled: false,
             },
         ];
@@ -1607,6 +1675,42 @@ mod security_tests {
             .expect("request");
         let res_put = app.clone().oneshot(req_put).await.expect("response");
         assert_eq!(res_put.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn analyst_api_token_can_access_api_me() {
+        let app = test_app().await;
+        let req = Request::builder()
+            .uri("/api/me")
+            .header(header::AUTHORIZATION, "Bearer analyst-token")
+            .body(Body::empty())
+            .expect("request");
+        let res = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn analyst_api_token_cannot_access_admin_endpoints() {
+        let app = test_app().await;
+        let req = Request::builder()
+            .uri("/api/audit")
+            .header(header::AUTHORIZATION, "Bearer analyst-token")
+            .body(Body::empty())
+            .expect("request");
+        let res = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn admin_api_token_can_access_admin_endpoints() {
+        let app = test_app().await;
+        let req = Request::builder()
+            .uri("/api/audit?page=1&page_size=10")
+            .header(header::AUTHORIZATION, "Bearer admin-token")
+            .body(Body::empty())
+            .expect("request");
+        let res = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]

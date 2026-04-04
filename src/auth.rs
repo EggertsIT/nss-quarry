@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
+use axum::http::{HeaderMap, header};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use base64::Engine;
@@ -17,12 +18,13 @@ use tokio::sync::RwLock;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::config::{AuthConfig, AuthMode, LocalUser, OidcRoleMap, RoleName};
+use crate::config::{ApiTokenConfig, AuthConfig, AuthMode, LocalUser, OidcRoleMap, RoleName};
 use crate::models::{AuthResponse, AuthUser, LocalLoginRequest};
 
 #[derive(Clone)]
 pub struct AuthManager {
     cfg: AuthConfig,
+    api_tokens: Arc<Vec<ApiTokenConfig>>,
     local_users: Arc<HashMap<String, LocalUser>>,
     sessions: Arc<RwLock<HashMap<String, StoredSession>>>,
     oidc: Option<OidcRuntime>,
@@ -61,6 +63,7 @@ struct StoredSession {
 
 impl AuthManager {
     pub async fn new(cfg: &AuthConfig) -> Result<Self> {
+        let api_tokens = cfg.api_tokens.tokens.clone();
         let local_users = cfg
             .local_users
             .users
@@ -106,6 +109,7 @@ impl AuthManager {
 
         Ok(Self {
             cfg: cfg.clone(),
+            api_tokens: Arc::new(api_tokens),
             local_users: Arc::new(local_users),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             oidc,
@@ -254,10 +258,43 @@ impl AuthManager {
         Some(session.user)
     }
 
+    pub fn resolve_user_from_api_token_header(&self, headers: &HeaderMap) -> Option<AuthUser> {
+        let token = extract_api_token(headers)?;
+        self.resolve_user_from_api_token(token)
+    }
+
     pub async fn invalidate_cookie_session(&self, jar: &CookieJar) {
         if let Some(cookie) = jar.get(&self.cfg.cookie_name) {
             self.sessions.write().await.remove(cookie.value());
         }
+    }
+
+    fn resolve_user_from_api_token(&self, token: &str) -> Option<AuthUser> {
+        let token = token.trim();
+        if token.is_empty() {
+            return None;
+        }
+
+        for api_token in self.api_tokens.iter() {
+            if api_token.disabled {
+                continue;
+            }
+            let parsed_hash = match PasswordHash::new(&api_token.token_hash) {
+                Ok(hash) => hash,
+                Err(_) => continue,
+            };
+            if Argon2::default()
+                .verify_password(token.as_bytes(), &parsed_hash)
+                .is_ok()
+            {
+                return Some(AuthUser {
+                    username: api_token.name.clone(),
+                    role: api_token.role,
+                    auth_mode: "api_token".to_string(),
+                });
+            }
+        }
+        None
     }
 }
 
@@ -334,9 +371,31 @@ fn extract_groups(claims: &serde_json::Value, claim_name: &str) -> Vec<String> {
     Vec::new()
 }
 
+fn extract_api_token(headers: &HeaderMap) -> Option<&str> {
+    if let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        let mut parts = value.split_whitespace();
+        if let (Some(scheme), Some(token), None) = (parts.next(), parts.next(), parts.next())
+            && scheme.eq_ignore_ascii_case("bearer")
+            && !token.trim().is_empty()
+        {
+            return Some(token.trim());
+        }
+    }
+
+    headers
+        .get("x-api-token")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+    use axum::http::{HeaderValue, header};
 
     use super::*;
 
@@ -357,6 +416,14 @@ mod tests {
             disabled: false,
         }];
         cfg
+    }
+
+    fn hash_secret(secret: &str) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(secret.as_bytes(), &salt)
+            .expect("hash secret")
+            .to_string()
     }
 
     #[tokio::test]
@@ -414,5 +481,39 @@ mod tests {
         };
         assert!(has_min_role(&analyst, RoleName::Helpdesk));
         assert!(!has_min_role(&helpdesk, RoleName::Analyst));
+    }
+
+    #[tokio::test]
+    async fn api_token_header_resolves_user() {
+        let mut cfg = local_auth_cfg();
+        cfg.api_tokens.tokens = vec![ApiTokenConfig {
+            name: "svc-servicenow".to_string(),
+            token_hash: hash_secret("secret-token-value"),
+            role: RoleName::Analyst,
+            disabled: false,
+        }];
+        let manager = AuthManager::new(&cfg).await.expect("create manager");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-token-value"),
+        );
+
+        let user = manager
+            .resolve_user_from_api_token_header(&headers)
+            .expect("api token user");
+        assert_eq!(user.username, "svc-servicenow");
+        assert_eq!(user.role, RoleName::Analyst);
+        assert_eq!(user.auth_mode, "api_token");
+    }
+
+    #[test]
+    fn x_api_token_header_is_supported() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-api-token",
+            HeaderValue::from_static("secret-token-value"),
+        );
+        assert_eq!(extract_api_token(&headers), Some("secret-token-value"));
     }
 }

@@ -24,6 +24,7 @@ Production/commercial use requires a paid monthly commercial subscription from t
   - `oidc_entra`
   - `oidc_okta`
   - `local_users` (small environments)
+- Optional API-token auth for backend automation and integrations.
 - Full audit log of auth/query/export/admin actions.
 - Health probes: `/healthz`, `/readyz`.
 
@@ -146,6 +147,21 @@ cargo run -- hash-password --password 'StrongPasswordHere'
 
 Use the output in `[[auth.local_users.users]]`.
 
+## API Token Setup
+
+Generate a new API token and matching Argon2 hash:
+
+```bash
+cargo run -- generate-api-token --name svc-servicenow-analyst
+```
+
+This prints:
+- the plaintext token
+- the Argon2 `token_hash`
+- a ready-to-paste `[[auth.api_tokens.tokens]]` config snippet
+
+Use API tokens for backend integrations such as ServiceNow. Recommended role for automation is `analyst`, not `admin`.
+
 ## Run
 
 ```bash
@@ -174,6 +190,10 @@ Full API reference with Python examples:
 - `GET /api/admin/visibility-filters` (admin only; returns URL regex + blocked IP exclusion rules)
 - `PUT /api/admin/visibility-filters` (admin only; updates and persists exclusion rules)
 - `POST /api/admin/ingestor/force-finalize-open-files` (admin only; calls `nss-ingestor` force-finalize API and writes audit event with actor/time/source IP)
+
+API authentication:
+- session cookie for browser and interactive login
+- `Authorization: Bearer <token>` or `X-API-Token: <token>` for automation API clients
 
 `/api/audit` query parameters:
 - `page` (default `1`)

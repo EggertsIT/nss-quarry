@@ -44,6 +44,12 @@ helpdesk_groups = ["nss-helpdesk"]
 analyst_groups = ["nss-analyst"]
 admin_groups = ["nss-admin"]
 
+[[auth.api_tokens.tokens]]
+name = "svc-servicenow-analyst"
+token_hash = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$REPLACE"
+role = "analyst"
+disabled = true
+
 [[auth.local_users.users]]
 username = "admin"
 password_hash = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$REPLACE"

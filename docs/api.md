@@ -37,6 +37,13 @@ Supported auth modes:
 - `oidc_entra`
 - `oidc_okta`
 
+Automation auth:
+- optional API tokens can be configured in `auth.api_tokens.tokens`
+- API clients can authenticate with either:
+  - `Authorization: Bearer <token>`
+  - `X-API-Token: <token>`
+- API-token auth is intended for non-browser integrations such as ServiceNow workflows
+
 Role levels:
 - `helpdesk`
 - `analyst`
@@ -50,6 +57,7 @@ Role behavior:
 Operational note:
 - session state is held in-memory by `nss-quarry`
 - a service restart invalidates existing sessions
+- API tokens are config-backed and survive service restarts
 
 ## Common Python Setup
 
@@ -96,6 +104,18 @@ def require_ok(response: requests.Response) -> requests.Response:
 
 def pretty(obj) -> None:
     print(json.dumps(obj, indent=2, sort_keys=True))
+```
+
+Example bearer-token bootstrap for automation:
+
+```python
+API_TOKEN = "paste-generated-token-here"
+
+session = requests.Session()
+session.verify = VERIFY_TLS
+session.headers.update({
+    "Authorization": f"Bearer {API_TOKEN}",
+})
 ```
 
 Error format for application errors:
@@ -302,6 +322,8 @@ Python:
 response = require_ok(session.get(f"{BASE_URL}/api/me"))
 pretty(response.json())
 ```
+
+If the request used an API token, `auth_mode` is returned as `api_token`.
 
 ### `POST /auth/logout`
 
@@ -843,6 +865,7 @@ for row in search["rows"][:10]:
 ## Recommended Client Behavior
 
 - Use `requests.Session()` so the login cookie is reused automatically.
+- Prefer API tokens over session-cookie login for backend integrations.
 - In production, validate TLS with your internal CA or public CA bundle.
 - Do not rely on sessions surviving service restarts.
 - Use `/api/schema` to discover the active field mapping before building integrations.

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use argon2::PasswordHash;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -62,6 +63,21 @@ impl AppConfig {
         }
         if self.auth.cookie_name.trim().is_empty() {
             anyhow::bail!("auth.cookie_name cannot be empty");
+        }
+        let mut api_token_names = std::collections::HashSet::new();
+        for token in &self.auth.api_tokens.tokens {
+            if token.name.trim().is_empty() {
+                anyhow::bail!("auth.api_tokens.tokens[].name cannot be empty");
+            }
+            PasswordHash::new(&token.token_hash).map_err(|_| {
+                anyhow::anyhow!(
+                    "auth.api_tokens.tokens[{}] has invalid token_hash format",
+                    token.name
+                )
+            })?;
+            if !api_token_names.insert(token.name.clone()) {
+                anyhow::bail!("duplicate auth.api_tokens token name '{}'", token.name);
+            }
         }
         validate_identifier(&self.data.fields.time_field)?;
         validate_identifier(&self.data.fields.user_field)?;
@@ -238,6 +254,7 @@ pub struct AuthConfig {
     pub session_ttl_minutes: u64,
     pub secure_cookie: bool,
     pub oidc: Option<OidcConfig>,
+    pub api_tokens: ApiTokensConfig,
     pub local_users: LocalUsersConfig,
 }
 
@@ -249,6 +266,7 @@ impl Default for AuthConfig {
             session_ttl_minutes: 60,
             secure_cookie: true,
             oidc: None,
+            api_tokens: ApiTokensConfig::default(),
             local_users: LocalUsersConfig::default(),
         }
     }
@@ -298,6 +316,21 @@ pub struct OidcRoleMap {
 #[serde(default)]
 pub struct LocalUsersConfig {
     pub users: Vec<LocalUser>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(default)]
+pub struct ApiTokensConfig {
+    pub tokens: Vec<ApiTokenConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApiTokenConfig {
+    pub name: String,
+    pub token_hash: String,
+    pub role: RoleName,
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -499,5 +532,20 @@ mod tests {
             err.to_string()
                 .contains("audit.rotate_max_files must be > 0 when audit.rotate_max_bytes is set")
         );
+    }
+
+    #[test]
+    fn validate_rejects_invalid_api_token_hash() {
+        let mut cfg = valid_local_config();
+        cfg.auth.api_tokens.tokens = vec![ApiTokenConfig {
+            name: "svc-servicenow".to_string(),
+            token_hash: "not-a-hash".to_string(),
+            role: RoleName::Analyst,
+            disabled: false,
+        }];
+        let err = cfg
+            .validate()
+            .expect_err("must reject invalid api token hash");
+        assert!(err.to_string().contains("invalid token_hash format"));
     }
 }

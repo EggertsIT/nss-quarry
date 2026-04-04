@@ -18,12 +18,12 @@ This is possible today with the current `nss-quarry` API. It is a good enterpris
 Recommended posture for enterprise:
 - keep `nss-quarry` private and internal
 - integrate through a ServiceNow MID Server or another private integration worker
-- use a dedicated least-privilege `nss-quarry` service account
+- use a dedicated least-privilege `nss-quarry` API token
 - do not use an `admin` account for this workflow
 - keep PCAP upload, search, and summary generation server-side
 - write only the support-relevant summary back to the case by default
 
-Recommended `nss-quarry` role for the ServiceNow integration account:
+Recommended `nss-quarry` role for the ServiceNow integration token:
 - `analyst`
 
 Why `analyst`:
@@ -136,16 +136,17 @@ If the environment uses Flow Designer, ServiceNow documents that the REST step i
 ## Step 4: ServiceNow authenticates to `nss-quarry`
 
 Recommended:
-- create a dedicated local service account in `nss-quarry`, for example `svc_servicenow_analyst`
+- generate a dedicated API token in `nss-quarry`, for example for `svc_servicenow_analyst`
 - assign role `analyst`
-- store credentials in ServiceNow credential storage / connection alias
+- store the token in ServiceNow credential storage / connection alias / secret store
 - authenticate over HTTPS
-- keep cookie handling inside the backend integration logic
+- send `Authorization: Bearer <token>`
 
-Why not OIDC for this workflow:
+Why API tokens are better here:
 - OIDC is ideal for interactive human login
 - this specific use case is backend automation
-- a dedicated service account is simpler and more deterministic today
+- API tokens are simpler and more deterministic than session-cookie login
+- they avoid building a login-and-cookie workflow inside the integration
 
 ## Step 5: Send the PCAP to `nss-quarry`
 
@@ -253,9 +254,9 @@ This is the part that matters most for enterprise use.
 
 ### Identity
 
-- Use a dedicated service account for ServiceNow automation.
+- Use a dedicated API token for ServiceNow automation.
 - Use `analyst`, not `admin`.
-- Rotate the password and store it in ServiceNow credential storage.
+- Rotate the token and store it in ServiceNow credential storage.
 
 ### Scope control
 
@@ -284,12 +285,7 @@ This is the first real constraint.
 
 ### 2. Non-interactive auth model
 
-`nss-quarry` currently uses session-cookie auth, not API tokens. That still works for backend automation, but it means the integration must:
-- log in first
-- keep the returned cookie
-- reuse it for subsequent calls
-
-This is workable, but a future service-account API token model would be cleaner.
+`nss-quarry` supports API-token auth for automation clients, which is the recommended choice for ServiceNow integrations.
 
 ### 3. Summary generation
 
@@ -302,18 +298,15 @@ There is no dedicated `case summary` endpoint yet. For now, ServiceNow should co
 
 If this experimental workflow becomes important, the next features worth adding to `nss-quarry` are:
 
-1. Service account API tokens
-- better for backend integrations than session-cookie login
-
-2. A dedicated summary endpoint
+1. A dedicated summary endpoint
 - for example `/api/pcap/assist-summary`
 - input: PCAP upload or prior PCAP-analysis result
 - output: structured support summary, top findings, and issue classification
 
-3. Case correlation metadata
+2. Case correlation metadata
 - optional custom field in audit metadata such as `case_id` or `ticket_number`
 
-4. Prebuilt ServiceNow payload mode
+3. Prebuilt ServiceNow payload mode
 - response shaped specifically for case comments, work notes, and attachments
 
 ## Verdict
@@ -324,7 +317,7 @@ Yes, it can be a good enterprise idea.
 
 But only if you implement it as:
 - private backend integration
-- least-privilege service account
+- least-privilege API token
 - bounded PCAP-driven searches
 - summary-first case updates
 
