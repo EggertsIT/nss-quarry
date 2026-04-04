@@ -38,8 +38,10 @@ Temporary exceptions are managed in [`audit-allowlist.txt`](./audit-allowlist.tx
 - scheduled reassessment and removal target.
 
 Current temporary exceptions:
-- `RUSTSEC-2023-0071` (`rsa`, transitive via `openidconnect`)  
-  Owner: platform engineering. Status: no fixed upgrade available in current chain.
+- `RUSTSEC-2023-0071` (`rsa`, transitive via `openidconnect`)
+  Owner: platform engineering.
+  Review cadence: monthly dependency review.
+  Removal target: remove immediately once a supported `openidconnect/oauth2` chain ships a fixed `rsa` path.
 
 ## Release Artifact Verification
 
