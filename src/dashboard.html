@@ -116,6 +116,13 @@
       min-width: 240px;
       font-variant-numeric: tabular-nums;
     }
+    .form-grid .form-actions {
+      grid-column: 1 / -1;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(180px, 220px));
+      gap: 8px;
+      align-items: end;
+    }
     .message { margin: 8px 0 0 0; color: var(--danger); font-size: 0.9rem; min-height: 1.3em; }
     .ok-msg { color: var(--ok); }
     .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
@@ -210,6 +217,9 @@
       .form-grid .field-wide {
         grid-column: span 1;
         min-width: 0;
+      }
+      .form-grid .form-actions {
+        grid-template-columns: 1fr;
       }
     }
     .chart {
@@ -450,13 +460,15 @@
           <div><label for="f-device">Device</label><input id="f-device" placeholder="LAPTOP-123"></div>
           <div><label for="f-dept">Department</label><input id="f-dept" placeholder="IT"></div>
           <div><label for="columns">Columns (comma-separated, optional)</label><input id="columns" placeholder="time,action,url,login,cip"></div>
-          <div>
-            <label>&nbsp;</label>
-            <button type="submit" class="primary">Run Search</button>
-          </div>
-          <div>
-            <label>&nbsp;</label>
-            <button id="export-csv" type="button" class="ghost">Export CSV</button>
+          <div class="form-actions">
+            <div>
+              <label>&nbsp;</label>
+              <button type="submit" class="primary">Run Search</button>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button id="export-csv" type="button" class="ghost">Export CSV</button>
+            </div>
           </div>
         </form>
         <div id="search-msg" class="message"></div>
