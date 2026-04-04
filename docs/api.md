@@ -579,6 +579,7 @@ Response includes:
   - `top_devices`
   - `top_source_ips`
   - `top_departments`
+  - `top_response_codes`
   - `country_flows_24h`
 - freshness metadata:
   - `source`
