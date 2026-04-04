@@ -580,7 +580,7 @@
       renderTopTables(data.tables || []);
       renderChartFromTable(data.tables?.[0], "chart-a", "chart-title-a");
       renderChartFromTable(data.tables?.[1], "chart-b", "chart-title-b");
-      renderCountryFlowMap(data.tables || []);
+      await renderCountryFlowMap(data.tables || []);
     }
 
     function renderChartFromTable(table, chartId, titleId) {
@@ -737,7 +737,7 @@
       "za": [-30.6, 22.9],
     };
 
-    const WORLD_LAND_PATHS = [
+    const FALLBACK_WORLD_LAND_PATHS = [
       "M85,128 L125,78 L203,58 L264,83 L287,123 L258,156 L225,185 L206,228 L169,244 L142,223 L119,184 L90,167 Z",
       "M244,238 L270,256 L286,302 L281,349 L262,393 L235,417 L216,396 L223,353 L231,318 L224,280 Z",
       "M302,74 L334,60 L352,71 L343,94 L315,97 Z",
@@ -746,6 +746,8 @@
       "M798,298 L826,288 L855,301 L877,322 L866,346 L833,355 L803,339 L789,316 Z",
       "M882,365 L902,359 L914,372 L905,385 L887,383 Z",
     ];
+    let worldGeoJsonPromise = null;
+    const worldLandLayerCache = new Map();
 
     function normalizeCountryName(value) {
       if (!value) return "";
@@ -767,15 +769,98 @@
       return COUNTRY_CENTROIDS[key] || null;
     }
 
-    function renderCountryFlowMap(tables) {
+    async function loadWorldGeoJson() {
+      if (!worldGeoJsonPromise) {
+        worldGeoJsonPromise = fetch("/assets/world.geojson", {
+          method: "GET",
+          credentials: "include",
+        }).then(async (res) => {
+          if (!res.ok) {
+            throw new Error(`world map asset failed (${res.status})`);
+          }
+          return res.json();
+        });
+      }
+      return worldGeoJsonPromise;
+    }
+
+    function buildRingPath(ring, width, height) {
+      if (!Array.isArray(ring) || ring.length < 2) return "";
+      const points = [];
+      for (const coord of ring) {
+        if (!Array.isArray(coord) || coord.length < 2) continue;
+        const lon = Number(coord[0]);
+        const lat = Number(coord[1]);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+        const p = projectEquirectangular(lat, lon, width, height);
+        points.push(p);
+      }
+      if (points.length < 2) return "";
+      const d = points
+        .map((p, idx) => `${idx === 0 ? "M" : "L"}${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
+        .join(" ");
+      return `${d} Z`;
+    }
+
+    function buildGeometryPaths(geometry, width, height) {
+      if (!geometry || !geometry.type || !geometry.coordinates) return [];
+      if (geometry.type === "Polygon") {
+        return geometry.coordinates
+          .map((ring) => buildRingPath(ring, width, height))
+          .filter((d) => d.length > 0);
+      }
+      if (geometry.type === "MultiPolygon") {
+        const out = [];
+        for (const polygon of geometry.coordinates) {
+          if (!Array.isArray(polygon)) continue;
+          for (const ring of polygon) {
+            const d = buildRingPath(ring, width, height);
+            if (d.length > 0) out.push(d);
+          }
+        }
+        return out;
+      }
+      return [];
+    }
+
+    async function buildWorldLandLayer(width, height) {
+      const cacheKey = `${width}x${height}`;
+      if (worldLandLayerCache.has(cacheKey)) {
+        return worldLandLayerCache.get(cacheKey);
+      }
+      try {
+        const geojson = await loadWorldGeoJson();
+        const features = Array.isArray(geojson?.features) ? geojson.features : [];
+        const paths = [];
+        for (const feature of features) {
+          const featurePaths = buildGeometryPaths(feature?.geometry, width, height);
+          for (const d of featurePaths) {
+            paths.push(`<path d="${d}" fill="#d8dee6" stroke="#c6ced9" stroke-width="0.55" />`);
+          }
+        }
+        if (paths.length > 0) {
+          const layer = paths.join("");
+          worldLandLayerCache.set(cacheKey, layer);
+          return layer;
+        }
+      } catch (_) {}
+
+      const fallback = FALLBACK_WORLD_LAND_PATHS
+        .map((p) => `<path d="${p}" fill="#d8dee6" stroke="#c6ced9" stroke-width="0.9" />`)
+        .join("");
+      worldLandLayerCache.set(cacheKey, fallback);
+      return fallback;
+    }
+
+    async function renderCountryFlowMap(tables) {
       const host = $("flow-map-wrap");
       const meta = $("flow-map-meta");
       host.innerHTML = "";
 
       const table = (tables || []).find(t => t && t.name === "country_flows_24h");
       const rows = Array.isArray(table?.rows) ? table.rows : [];
-      const width = 1000;
-      const height = 460;
+      const width = 1400;
+      const height = 620;
 
       const parsed = rows.map((row) => {
         const source = row?.[0] || "";
@@ -797,6 +882,7 @@
       const maxCount = Math.max(1, ...mappable.map(f => f.count));
       const nodeWeights = new Map();
       const arcPaths = [];
+      const land = await buildWorldLandLayer(width, height);
 
       for (const flow of mappable) {
         const [srcLat, srcLon] = flow.srcLatLon;
@@ -811,8 +897,8 @@
         const cx = (src.x + dst.x) / 2;
         const cy = Math.min(src.y, dst.y) - curvature;
         const norm = Math.sqrt(flow.count / maxCount);
-        const widthPx = (0.7 + norm * 2.5).toFixed(2);
-        const opacity = (0.18 + norm * 0.78).toFixed(3);
+        const widthPx = (0.35 + norm * 1.55).toFixed(2);
+        const opacity = (0.17 + norm * 0.68).toFixed(3);
         arcPaths.push(
           `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#ff2ea6" stroke-opacity="${opacity}" stroke-width="${widthPx}" fill="none" stroke-linecap="round" />`
         );
@@ -828,23 +914,29 @@
       for (const [key, weight] of nodeWeights.entries()) {
         const [x, y] = key.split(",").map(Number);
         const norm = Math.sqrt(weight / maxNode);
-        const radius = (1.3 + norm * 3.6).toFixed(2);
+        const radius = (0.8 + norm * 2.4).toFixed(2);
         nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="#ff4db4" fill-opacity="0.82" />`);
       }
 
-      const land = WORLD_LAND_PATHS
-        .map(p => `<path d="${p}" fill="#d6dce4" stroke="#c4ccd7" stroke-width="1.1" />`)
+      const latLines = [-60, -30, 0, 30, 60]
+        .map((lat) => {
+          const y = projectEquirectangular(lat, 0, width, height).y.toFixed(1);
+          return `<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#dbe3ee" stroke-width="0.8" stroke-opacity="0.4" />`;
+        })
         .join("");
-
-      const gridLines = [
-        90, 180, 270, 360,
-      ].map(v => `<line x1="0" y1="${v}" x2="${width}" y2="${v}" stroke="#d8e0eb" stroke-width="0.8" stroke-opacity="0.45" />`).join("");
+      const lonLines = [-120, -60, 0, 60, 120]
+        .map((lon) => {
+          const x = projectEquirectangular(0, lon, width, height).x.toFixed(1);
+          return `<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#dbe3ee" stroke-width="0.8" stroke-opacity="0.4" />`;
+        })
+        .join("");
+      const gridLines = `${latLines}${lonLines}`;
 
       const svg = `
         <svg id="flow-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Global country flow map">
           <defs>
             <filter id="flowGlow">
-              <feGaussianBlur stdDeviation="1.9" result="blur"/>
+              <feGaussianBlur stdDeviation="1.35" result="blur"/>
               <feMerge>
                 <feMergeNode in="blur"></feMergeNode>
                 <feMergeNode in="SourceGraphic"></feMergeNode>

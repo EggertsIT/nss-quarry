@@ -146,6 +146,7 @@ fn build_router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/dashboard", get(dashboard_page))
+        .route("/assets/world.geojson", get(world_geojson))
         .route("/auth/login", get(auth_login_oidc).post(auth_login_local))
         .route("/auth/callback", get(auth_callback_oidc))
         .route("/auth/logout", post(auth_logout))
@@ -200,6 +201,15 @@ async fn readyz(State(state): State<AppState>) -> Response {
 
 async fn dashboard_page(State(state): State<AppState>) -> Html<String> {
     Html(render_dashboard_html(state.cfg.auth.mode))
+}
+
+async fn world_geojson() -> Response {
+    let mut res = Response::new(include_str!("world.geojson").to_string().into());
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/geo+json; charset=utf-8"),
+    );
+    res
 }
 
 async fn auth_login_local(
