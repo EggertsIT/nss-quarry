@@ -16,6 +16,7 @@ Production/commercial use requires a paid monthly commercial subscription from t
 - Query last 14-day parquet partitions with strict guardrails (max 7-day query window by default).
 - Troubleshooting dashboards and filtered search APIs.
 - Embedded `NSS Ingestor` dashboard tab (admin-only, via `/ingestor/*` reverse-proxy).
+- Admin-only `Force Finalize Open Parquet Files` control (audited, source-IP logged).
 - CSV export with audit trail.
 - RBAC: `helpdesk`, `analyst`, `admin`.
 - Authentication modes:
@@ -113,6 +114,9 @@ cp config.example.toml config.toml
 - field mapping in `data.fields` (fresh-install defaults are aligned to `nss-to-parquet` `zscaler_web_v2_ops`, including `user_field="login"` and `url_field="url"`).
 - `auth.mode`
 - auth settings for the chosen mode.
+- ingestor control settings:
+  - `ingestor.base_url` (default `http://127.0.0.1:9090`)
+  - `ingestor.request_timeout_ms` (default `5000`)
 - for production OIDC with Microsoft Entra ID or Okta, follow the dedicated guide:
   - `docs/oidc-setup.md`
 - optional audit retention/rotation:
@@ -158,6 +162,7 @@ cargo run -- run --config ./config.toml
 - `GET /api/dashboards/{name}`
 - `GET /api/audit` (admin only, server-side pagination and filtering)
 - `GET /api/audit/export/csv` (admin only, filter-aware export; capped to 50k rows)
+- `POST /api/admin/ingestor/force-finalize-open-files` (admin only; calls `nss-ingestor` force-finalize API and writes audit event with actor/time/source IP)
 
 `/api/audit` query parameters:
 - `page` (default `1`)
@@ -235,3 +240,7 @@ sudo setfacl -m u:nssquarry:rX /var/lib/nss-ingestor/data
 sudo setfacl -R -m u:nssquarry:rX /var/lib/nss-ingestor/data
 curl -k https://127.0.0.1/readyz
 ```
+
+If permissions are correct but recent data is still missing, check `nss-to-parquet` writer finalization settings.  
+Low-volume traffic can remain in an open `.parquet.tmp` writer until rotation/finalize triggers.  
+Set `writer.max_file_age_secs` (for example `60`) in `nss-ingestor` config so files are finalized and queryable on a fixed interval.

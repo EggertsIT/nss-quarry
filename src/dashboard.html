@@ -308,6 +308,7 @@
         <h3>NSS Ingestor Dashboard</h3>
         <div class="toolbar" style="margin-bottom: 8px;">
           <button id="ingestor-refresh" type="button" class="ghost">Refresh Ingestor</button>
+          <button id="ingestor-force-finalize" type="button" class="ghost">Force Finalize Open Parquet Files</button>
           <button id="ingestor-open" type="button" class="ghost">Open in New Tab</button>
           <div id="ingestor-meta" class="muted"></div>
         </div>
@@ -497,6 +498,43 @@
         ingestorLoaded = true;
       }
       await loadIngestorMeta();
+    }
+
+    async function forceFinalizeOpenParquetFiles() {
+      const proceed = window.confirm(
+        "Force finalize non-empty open parquet files now? This may create smaller files."
+      );
+      if (!proceed) {
+        return;
+      }
+      const btn = $("ingestor-force-finalize");
+      btn.disabled = true;
+      setMessage("ingestor-msg", "Submitting force finalize request...");
+      try {
+        const res = await fetch("/api/admin/ingestor/force-finalize-open-files", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+        });
+        const ct = res.headers.get("content-type") || "";
+        const payload = ct.includes("application/json") ? await res.json() : null;
+        if (!res.ok) {
+          const msg = payload && (payload.message || payload.error)
+            ? (payload.message || payload.error)
+            : `${res.status} ${res.statusText}`;
+          throw new Error(msg);
+        }
+        const result = payload && payload.result ? payload.result : null;
+        const msg = result
+          ? `Finalize complete: files=${Number(result.finalized_files || 0).toLocaleString()} rows=${Number(result.finalized_rows || 0).toLocaleString()} skipped_empty=${Number(result.skipped_empty_writers || 0).toLocaleString()}`
+          : (payload && payload.message ? payload.message : "Finalize request completed.");
+        setMessage("ingestor-msg", msg, true);
+        await loadIngestorMeta();
+      } catch (err) {
+        setMessage("ingestor-msg", err.message || "Force finalize request failed.");
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     async function loadDashboard() {
@@ -1000,6 +1038,13 @@
           await loadIngestorDashboard(true);
         } catch (err) {
           setMessage("ingestor-msg", err.message || "Failed to refresh NSS Ingestor dashboard.");
+        }
+      });
+      $("ingestor-force-finalize").addEventListener("click", async () => {
+        try {
+          await forceFinalizeOpenParquetFiles();
+        } catch (err) {
+          setMessage("ingestor-msg", err.message || "Force finalize failed.");
         }
       });
       $("ingestor-open").addEventListener("click", () => {

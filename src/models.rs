@@ -142,3 +142,25 @@ pub struct AuditListResponse {
     pub total: usize,
     pub total_pages: u32,
 }
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IngestorForceFinalizeOpenFilesResult {
+    pub finalized_files: u64,
+    pub finalized_rows: u64,
+    pub skipped_empty_writers: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct IngestorForceFinalizeOpenFilesResponse {
+    pub status: String,
+    #[serde(default)]
+    pub message: String,
+    #[serde(default)]
+    pub triggered_at: String,
+    #[serde(default)]
+    pub cooldown_secs: Option<u64>,
+    #[serde(default)]
+    pub retry_after_secs: Option<u64>,
+    #[serde(default)]
+    pub result: Option<IngestorForceFinalizeOpenFilesResult>,
+}

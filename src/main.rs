@@ -8,12 +8,13 @@ mod webui;
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -27,9 +28,9 @@ use crate::audit::AuditLogger;
 use crate::auth::{AuthManager, has_min_role};
 use crate::config::{AppConfig, AuthMode, RoleName};
 use crate::models::{
-    AuditEvent, AuditListResponse, AuthResponse, HealthResponse, LocalLoginRequest,
-    ParquetColumnInfo, PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse,
-    SearchRequest,
+    AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
+    IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
+    PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
 use crate::pcap::analyze_pcap_bytes;
 use crate::query::QueryService;
@@ -65,6 +66,7 @@ struct AppState {
     auth: AuthManager,
     audit: AuditLogger,
     query: QueryService,
+    ingestor_client: reqwest::Client,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -116,11 +118,16 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let auth = AuthManager::new(&cfg.auth).await?;
     let query = QueryService::new(&cfg)?;
     let audit = AuditLogger::new(&cfg.audit).await?;
+    let ingestor_client = reqwest::Client::builder()
+        .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
+        .build()
+        .context("failed building ingestor HTTP client")?;
     let state = AppState {
         cfg: Arc::clone(&cfg),
         auth,
         audit,
         query,
+        ingestor_client,
     };
 
     let app = build_router(state);
@@ -143,6 +150,10 @@ fn build_router(state: AppState) -> Router {
         .route("/auth/logout", post(auth_logout))
         .route("/api/me", get(api_me))
         .route("/authz/ingestor", get(authz_ingestor))
+        .route(
+            "/api/admin/ingestor/force-finalize-open-files",
+            post(api_admin_ingestor_force_finalize_open_files),
+        )
         .route("/api/search", post(api_search))
         .route("/api/export/csv", post(api_export_csv))
         .route("/api/pcap/analyze", post(api_pcap_analyze))
@@ -290,6 +301,66 @@ async fn authz_ingestor(
 ) -> Result<StatusCode, AppError> {
     let _ = require_user(&state, &jar, RoleName::Admin).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn api_admin_ingestor_force_finalize_open_files(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Response, AppError> {
+    let user = require_user(&state, &jar, RoleName::Admin).await?;
+    let source_ip = extract_source_ip(&headers);
+    let url = format!(
+        "{}/api/admin/force-finalize-open-files",
+        state.cfg.ingestor.base_url.trim_end_matches('/')
+    );
+
+    let upstream = state
+        .ingestor_client
+        .post(&url)
+        .send()
+        .await
+        .map_err(AppError::bad_gateway)?;
+    let upstream_status = upstream.status();
+    let upstream_body = upstream.text().await.map_err(AppError::bad_gateway)?;
+    let response_payload =
+        serde_json::from_str::<IngestorForceFinalizeOpenFilesResponse>(&upstream_body)
+            .unwrap_or_else(|_| IngestorForceFinalizeOpenFilesResponse {
+                status: "error".to_string(),
+                message: format!(
+                    "invalid upstream response (status={}): {}",
+                    upstream_status.as_u16(),
+                    upstream_body
+                ),
+                triggered_at: Utc::now().to_rfc3339(),
+                cooldown_secs: None,
+                retry_after_secs: None,
+                result: None,
+            });
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.ingestor.force_finalize_open_files".to_string(),
+            outcome: if upstream_status.is_success() {
+                "success".to_string()
+            } else {
+                format!("http_{}", upstream_status.as_u16())
+            },
+            metadata: serde_json::json!({
+                "source_ip": source_ip,
+                "upstream_status": upstream_status.as_u16(),
+                "response": response_payload,
+            }),
+        })
+        .await;
+
+    let mut response = Json(response_payload).into_response();
+    *response.status_mut() = upstream_status;
+    Ok(response)
 }
 
 async fn api_search(
@@ -950,6 +1021,25 @@ fn csv_escape_audit(value: &str) -> String {
     }
 }
 
+fn extract_source_ip(headers: &HeaderMap) -> Option<String> {
+    if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        let first = forwarded
+            .split(',')
+            .next()
+            .map(str::trim)
+            .unwrap_or_default();
+        if !first.is_empty() {
+            return Some(first.to_string());
+        }
+    }
+    headers
+        .get("x-real-ip")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
 async fn require_user(
     state: &AppState,
     jar: &CookieJar,
@@ -1006,6 +1096,14 @@ impl AppError {
         Self {
             status: StatusCode::METHOD_NOT_ALLOWED,
             message: msg.to_string(),
+        }
+    }
+
+    fn bad_gateway(err: impl std::fmt::Display) -> Self {
+        error!(error = %err, "upstream ingestor call failed");
+        Self {
+            status: StatusCode::BAD_GATEWAY,
+            message: "ingestor upstream call failed".to_string(),
         }
     }
 }
@@ -1077,11 +1175,16 @@ mod security_tests {
         let auth = AuthManager::new(&cfg.auth).await.expect("auth manager");
         let query = QueryService::new(&cfg).expect("query service");
         let audit = AuditLogger::new(&cfg.audit).await.expect("audit logger");
+        let ingestor_client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
+            .build()
+            .expect("ingestor client");
         build_router(AppState {
             cfg,
             auth,
             audit,
             query,
+            ingestor_client,
         })
     }
 
@@ -1125,6 +1228,14 @@ mod security_tests {
             .expect("request");
         let res_audit = app.clone().oneshot(req_audit).await.expect("response");
         assert_eq!(res_audit.status(), StatusCode::UNAUTHORIZED);
+
+        let req_finalize = Request::builder()
+            .method("POST")
+            .uri("/api/admin/ingestor/force-finalize-open-files")
+            .body(Body::empty())
+            .expect("request");
+        let res_finalize = app.clone().oneshot(req_finalize).await.expect("response");
+        assert_eq!(res_finalize.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -1134,11 +1245,20 @@ mod security_tests {
 
         let req = Request::builder()
             .uri("/authz/ingestor")
-            .header(header::COOKIE, cookie)
+            .header(header::COOKIE, cookie.clone())
             .body(Body::empty())
             .expect("request");
         let res = app.clone().oneshot(req).await.expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
+
+        let req_finalize = Request::builder()
+            .method("POST")
+            .uri("/api/admin/ingestor/force-finalize-open-files")
+            .header(header::COOKIE, cookie)
+            .body(Body::empty())
+            .expect("request");
+        let res_finalize = app.clone().oneshot(req_finalize).await.expect("response");
+        assert_eq!(res_finalize.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]

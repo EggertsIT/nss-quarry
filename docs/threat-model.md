@@ -35,7 +35,7 @@ Out of scope:
 2. Session cookie is issued (`HttpOnly`, `SameSite=Lax`, `Secure` in production).
 3. Authenticated API calls execute guarded routes:
    - `helpdesk+`: `/api/search`, `/api/export/csv`, `/api/dashboards/*`, `/api/schema`
-   - `admin`: `/api/audit*`, `/authz/ingestor`
+   - `admin`: `/api/audit*`, `/authz/ingestor`, `/api/admin/ingestor/force-finalize-open-files`
 4. Queries run in DuckDB against Parquet partitions.
 5. Security-relevant actions are appended to audit logs.
 
@@ -45,7 +45,7 @@ Out of scope:
 - Risk: non-admin users reaching admin endpoints or unauthed access to query APIs.
 - Mitigations:
   - centralized `require_user(.., min_role)` enforcement in handlers
-  - explicit admin gate for `/authz/ingestor` and `/api/audit*`
+  - explicit admin gate for `/authz/ingestor`, `/api/audit*`, and ingestor force-finalize control API
   - security tests covering unauthenticated/role-mismatched access
 
 ## T2: Session theft/misuse

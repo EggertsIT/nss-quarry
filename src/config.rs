@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 pub struct AppConfig {
     pub server: ServerConfig,
     pub data: DataConfig,
+    pub ingestor: IngestorConfig,
     pub auth: AuthConfig,
     pub security: SecurityConfig,
     pub query: QueryConfig,
@@ -44,6 +45,17 @@ impl AppConfig {
         }
         if self.query.timeout_ms < 500 {
             anyhow::bail!("query.timeout_ms must be >= 500");
+        }
+        if self.ingestor.base_url.trim().is_empty() {
+            anyhow::bail!("ingestor.base_url cannot be empty");
+        }
+        if !self.ingestor.base_url.starts_with("http://")
+            && !self.ingestor.base_url.starts_with("https://")
+        {
+            anyhow::bail!("ingestor.base_url must start with http:// or https://");
+        }
+        if self.ingestor.request_timeout_ms < 500 {
+            anyhow::bail!("ingestor.request_timeout_ms must be >= 500");
         }
         if self.auth.session_ttl_minutes == 0 {
             anyhow::bail!("auth.session_ttl_minutes must be > 0");
@@ -142,6 +154,22 @@ impl Default for DataConfig {
         Self {
             parquet_root: PathBuf::from("/var/lib/nss-ingestor/data"),
             fields: FieldMap::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct IngestorConfig {
+    pub base_url: String,
+    pub request_timeout_ms: u64,
+}
+
+impl Default for IngestorConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "http://127.0.0.1:9090".to_string(),
+            request_timeout_ms: 5000,
         }
     }
 }

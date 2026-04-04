@@ -13,6 +13,9 @@ This guide installs `nss-quarry` with HTTPS enabled by default.
 - detects `nss-ingestor` service when present
 - detects/parses upstream Parquet path (from `/etc/nss-ingestor/config.toml`)
 - prompts for `data.parquet_root` and writes it to `nss-quarry` config
+- writes ingestor control defaults:
+  - `ingestor.base_url = "http://127.0.0.1:9090"`
+  - `ingestor.request_timeout_ms = 5000`
 - offers to grant `nssquarry` read access to Parquet data (ACL preferred, group fallback)
 - installs systemd unit `/etc/systemd/system/nss-quarry.service`
 - installs Nginx reverse proxy `/etc/nginx/conf.d/nss-quarry.conf`
