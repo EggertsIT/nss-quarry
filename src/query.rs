@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -13,6 +13,10 @@ use crate::config::{AppConfig, FieldMap, RoleName};
 use crate::models::{
     DashboardResponse, MetricCard, SearchFilters, SearchRequest, SearchResponse, TableBlock,
 };
+
+const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
+const MIN_DASHBOARD_TIMEOUT_MS: u64 = 120_000;
+const DASHBOARD_CACHE_TTL_SECS: i64 = 60;
 
 #[derive(Clone)]
 pub struct QueryService {
@@ -34,12 +38,19 @@ struct CompiledVisibilityFilters {
     blocked_ip_set: HashSet<String>,
 }
 
+#[derive(Debug, Clone)]
+struct DashboardCacheEntry {
+    generated_at: DateTime<Utc>,
+    response: DashboardResponse,
+}
+
 struct QueryInner {
     parquet_root: PathBuf,
     fields: FieldMap,
     default_columns: Vec<String>,
     helpdesk_mask_fields: Vec<String>,
     visibility_filters: RwLock<CompiledVisibilityFilters>,
+    dashboard_cache: RwLock<HashMap<String, DashboardCacheEntry>>,
     input_value_re: Regex,
     max_days_per_query: i64,
     default_limit: u32,
@@ -58,6 +69,7 @@ impl QueryService {
                 default_columns: cfg.query.default_columns.clone(),
                 helpdesk_mask_fields: cfg.security.helpdesk_mask_fields.clone(),
                 visibility_filters: RwLock::new(CompiledVisibilityFilters::default()),
+                dashboard_cache: RwLock::new(HashMap::new()),
                 input_value_re,
                 max_days_per_query: cfg.query.max_days_per_query,
                 default_limit: cfg.query.default_limit,
@@ -81,10 +93,13 @@ impl QueryService {
     pub async fn search(&self, req: SearchRequest, role: RoleName) -> Result<SearchResponse> {
         let svc = self.clone();
         let work = tokio::task::spawn_blocking(move || svc.search_sync(req, role));
-        let result = tokio::time::timeout(Duration::from_millis(self.inner.timeout_ms), work)
-            .await
-            .map_err(|_| anyhow::anyhow!("query timed out"))?
-            .context("search worker failed")??;
+        let result = tokio::time::timeout(
+            Duration::from_millis(self.inner.timeout_ms.max(MIN_SEARCH_TIMEOUT_MS)),
+            work,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("query timed out"))?
+        .context("search worker failed")??;
         Ok(result)
     }
 
@@ -94,13 +109,31 @@ impl QueryService {
     }
 
     pub async fn dashboard(&self, name: &str, role: RoleName) -> Result<DashboardResponse> {
+        if let Some(cached) = self.dashboard_cache_get(name)? {
+            return Ok(cached);
+        }
         let svc = self.clone();
         let name = name.to_string();
-        let work = tokio::task::spawn_blocking(move || svc.dashboard_sync(&name, role));
-        tokio::time::timeout(Duration::from_millis(self.inner.timeout_ms), work)
-            .await
-            .map_err(|_| anyhow::anyhow!("dashboard query timed out"))?
-            .context("dashboard worker failed")?
+        let worker_name = name.clone();
+        let work = tokio::task::spawn_blocking(move || svc.dashboard_sync(&worker_name, role));
+        match tokio::time::timeout(
+            Duration::from_millis(self.inner.timeout_ms.max(MIN_DASHBOARD_TIMEOUT_MS)),
+            work,
+        )
+        .await
+        {
+            Ok(result) => {
+                let dashboard = result.context("dashboard worker failed")??;
+                self.dashboard_cache_put(&name, dashboard.clone())?;
+                Ok(dashboard)
+            }
+            Err(_) => {
+                if let Some(cached) = self.dashboard_cache_get_stale(&name)? {
+                    return Ok(cached);
+                }
+                Err(anyhow::anyhow!("dashboard query timed out"))
+            }
+        }
     }
 
     pub fn visibility_filters(&self) -> Result<VisibilityFilters> {
@@ -143,37 +176,14 @@ impl QueryService {
             .unwrap_or(self.inner.default_limit)
             .min(self.inner.max_rows);
 
-        let Some(parquet_src) =
-            parquet_source_sql_for_range(&self.inner.parquet_root, req.time_from, req.time_to)?
-        else {
+        let groups =
+            parquet_file_groups_for_range(&self.inner.parquet_root, req.time_from, req.time_to)?;
+        if groups.is_empty() {
             return Ok(SearchResponse {
                 rows: Vec::new(),
                 row_count: 0,
                 truncated: false,
             });
-        };
-
-        let sql = build_search_sql(&columns, &req, &self.inner.fields, &parquet_src, limit);
-
-        let conn = Connection::open_in_memory()?;
-        let mut stmt = conn.prepare(&sql)?;
-        let col_names = columns;
-        let mut rows = stmt.query([])?;
-        let mut out = Vec::new();
-        while let Some(row) = rows.next()? {
-            let mut map = serde_json::Map::new();
-            for (i, col) in col_names.iter().enumerate() {
-                let value: Option<String> = row.get(i)?;
-                match value {
-                    Some(v) => {
-                        map.insert(col.clone(), serde_json::Value::String(v));
-                    }
-                    None => {
-                        map.insert(col.clone(), serde_json::Value::Null);
-                    }
-                }
-            }
-            out.push(map);
         }
 
         let visibility_filters = self
@@ -182,11 +192,43 @@ impl QueryService {
             .read()
             .map_err(|_| anyhow::anyhow!("visibility filters lock poisoned"))?
             .clone();
-        apply_visibility_filters(&mut out, &self.inner.fields, &visibility_filters);
+        let batch_limit = search_batch_limit(limit, self.inner.max_rows);
+        let conn = Connection::open_in_memory()?;
+        let mut out = Vec::new();
 
-        if role == RoleName::Helpdesk {
-            apply_helpdesk_masking(&mut out, &self.inner.helpdesk_mask_fields);
+        'hours: for files in groups.into_iter().rev() {
+            let parquet_src = parquet_source_sql_from_files(&files);
+            let mut offset = 0u32;
+            loop {
+                let sql = build_search_sql(
+                    &columns,
+                    &req,
+                    &self.inner.fields,
+                    &parquet_src,
+                    batch_limit,
+                    offset,
+                );
+                let mut batch = execute_search_sql(&conn, &sql, &columns)?;
+                let raw_count = batch.len() as u32;
+                if raw_count == 0 {
+                    break;
+                }
+                apply_visibility_filters(&mut batch, &self.inner.fields, &visibility_filters);
+                if role == RoleName::Helpdesk {
+                    apply_helpdesk_masking(&mut batch, &self.inner.helpdesk_mask_fields);
+                }
+                out.extend(batch);
+                if out.len() as u32 >= limit {
+                    out.truncate(limit as usize);
+                    break 'hours;
+                }
+                if raw_count < batch_limit {
+                    break;
+                }
+                offset = offset.saturating_add(raw_count);
+            }
         }
+
         let row_count = out.len();
         Ok(SearchResponse {
             rows: out,
@@ -384,6 +426,46 @@ impl QueryService {
             tables,
         })
     }
+
+    fn dashboard_cache_get(&self, name: &str) -> Result<Option<DashboardResponse>> {
+        let guard = self
+            .inner
+            .dashboard_cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("dashboard cache lock poisoned"))?;
+        let Some(entry) = guard.get(name) else {
+            return Ok(None);
+        };
+        if (Utc::now() - entry.generated_at).num_seconds() <= DASHBOARD_CACHE_TTL_SECS {
+            return Ok(Some(entry.response.clone()));
+        }
+        Ok(None)
+    }
+
+    fn dashboard_cache_get_stale(&self, name: &str) -> Result<Option<DashboardResponse>> {
+        let guard = self
+            .inner
+            .dashboard_cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("dashboard cache lock poisoned"))?;
+        Ok(guard.get(name).map(|entry| entry.response.clone()))
+    }
+
+    fn dashboard_cache_put(&self, name: &str, response: DashboardResponse) -> Result<()> {
+        let mut guard = self
+            .inner
+            .dashboard_cache
+            .write()
+            .map_err(|_| anyhow::anyhow!("dashboard cache lock poisoned"))?;
+        guard.insert(
+            name.to_string(),
+            DashboardCacheEntry {
+                generated_at: Utc::now(),
+                response,
+            },
+        );
+        Ok(())
+    }
 }
 
 struct TopNArgs<'a> {
@@ -573,6 +655,7 @@ fn build_search_sql(
     fields: &FieldMap,
     parquet_src: &str,
     limit: u32,
+    offset: u32,
 ) -> String {
     let time_col = ident(&fields.time_field);
     let from = req
@@ -650,11 +733,45 @@ fn build_search_sql(
         req.filters.department.as_deref(),
     );
 
-    format!(
+    let mut sql = format!(
         "SELECT {select_list} FROM {parquet_src} WHERE {} ORDER BY {time_col} DESC LIMIT {limit}",
         where_clauses.join(" AND "),
         parquet_src = parquet_src
-    )
+    );
+    if offset > 0 {
+        sql.push_str(&format!(" OFFSET {offset}"));
+    }
+    sql
+}
+
+fn execute_search_sql(
+    conn: &Connection,
+    sql: &str,
+    columns: &[String],
+) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let mut map = serde_json::Map::new();
+        for (i, col) in columns.iter().enumerate() {
+            let value: Option<String> = row.get(i)?;
+            match value {
+                Some(v) => {
+                    map.insert(col.clone(), serde_json::Value::String(v));
+                }
+                None => {
+                    map.insert(col.clone(), serde_json::Value::Null);
+                }
+            }
+        }
+        out.push(map);
+    }
+    Ok(out)
+}
+
+fn search_batch_limit(limit: u32, max_rows: u32) -> u32 {
+    max_rows.max(limit).clamp(500, 5_000)
 }
 
 fn escape_sql_literal(value: &str) -> String {
@@ -948,6 +1065,45 @@ fn parquet_source_sql_from_files(files: &[PathBuf]) -> String {
     format!("read_parquet([{list}], union_by_name=true)")
 }
 
+fn parquet_file_groups_for_range(
+    root: &Path,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<Vec<PathBuf>>> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut groups = Vec::new();
+    let mut cursor = floor_to_hour(from);
+    let end = floor_to_hour(to);
+    while cursor <= end {
+        let part_dir = root.join(format!(
+            "dt={}/hour={:02}",
+            cursor.format("%Y-%m-%d"),
+            cursor.hour()
+        ));
+        let mut files = Vec::new();
+        if part_dir.is_dir() {
+            for entry in std::fs::read_dir(&part_dir)? {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
+                if file_type.is_file()
+                    && let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
+                    && ext.eq_ignore_ascii_case("parquet")
+                {
+                    files.push(entry.path());
+                }
+            }
+        }
+        files.sort();
+        if !files.is_empty() {
+            groups.push(files);
+        }
+        cursor += chrono::Duration::hours(1);
+    }
+    Ok(groups)
+}
+
 fn parquet_files_for_range(
     root: &Path,
     from: DateTime<Utc>,
@@ -1097,7 +1253,7 @@ mod tests {
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
         let src = "read_parquet(['/tmp/o''hare/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)";
-        let sql = build_search_sql(&columns, &req, &fields, src, 123);
+        let sql = build_search_sql(&columns, &req, &fields, src, 123, 0);
 
         assert!(sql.contains(
             "SELECT CAST(\"time\" AS VARCHAR) AS \"time\", CAST(\"url\" AS VARCHAR) AS \"url\""
@@ -1129,7 +1285,7 @@ mod tests {
         let fields = FieldMap::default();
         let src =
             "read_parquet(['/tmp/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)";
-        let sql = build_search_sql(&columns, &req, &fields, src, 50);
+        let sql = build_search_sql(&columns, &req, &fields, src, 50, 0);
 
         assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('1.1.1.1')"));
         assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('8.8.8.8')"));
@@ -1167,6 +1323,50 @@ mod tests {
         assert!(joined.contains("hour=00/part-000001.parquet"));
         assert!(joined.contains("hour=01/part-000001.parquet"));
         assert!(!joined.contains("hour=02/part-000001.parquet"));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn build_search_sql_includes_offset_when_requested() {
+        let req = SearchRequest {
+            time_from: Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap(),
+            time_to: Utc.with_ymd_and_hms(2026, 4, 1, 1, 0, 0).unwrap(),
+            filters: SearchFilters::default(),
+            limit: Some(200),
+            columns: Some(vec!["time".to_string()]),
+        };
+        let columns = req.columns.clone().expect("columns");
+        let fields = FieldMap::default();
+        let src =
+            "read_parquet(['/tmp/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)";
+        let sql = build_search_sql(&columns, &req, &fields, src, 200, 400);
+        assert!(sql.contains("LIMIT 200 OFFSET 400"));
+    }
+
+    #[test]
+    fn parquet_file_groups_for_range_groups_files_per_hour() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("nss-quarry-group-range-test-{unique}"));
+        let h00 = root.join("dt=2026-04-01").join("hour=00");
+        let h01 = root.join("dt=2026-04-01").join("hour=01");
+
+        std::fs::create_dir_all(&h00).expect("mkdir h00");
+        std::fs::create_dir_all(&h01).expect("mkdir h01");
+        std::fs::write(h00.join("part-000001.parquet"), b"").expect("touch h00 parquet 1");
+        std::fs::write(h00.join("part-000002.parquet"), b"").expect("touch h00 parquet 2");
+        std::fs::write(h01.join("part-000001.parquet"), b"").expect("touch h01 parquet");
+
+        let from = Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 4, 1, 1, 30, 0).unwrap();
+        let groups = parquet_file_groups_for_range(&root, from, to).expect("range groups");
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[1].len(), 1);
 
         std::fs::remove_dir_all(root).expect("cleanup");
     }

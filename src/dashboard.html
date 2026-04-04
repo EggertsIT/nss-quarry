@@ -746,6 +746,7 @@
 
       <div id="view-main">
       <div id="metric-cards" class="grid cards"></div>
+      <div id="main-msg" class="message"></div>
 
       <div class="grid two" style="margin-top: 14px;">
         <div class="panel chart-panel">
@@ -1296,19 +1297,25 @@
     }
 
     async function loadDashboard() {
-      const data = await apiFetch("/api/dashboards/overview", { method: "GET" });
-      const cardsHost = $("metric-cards");
-      cardsHost.innerHTML = "";
-      for (const card of data.cards || []) {
-        const div = document.createElement("div");
-        div.className = "panel metric";
-        div.innerHTML = `<div class="n">${card.name}</div><div class="k">${card.value}</div>`;
-        cardsHost.appendChild(div);
+      try {
+        const data = await apiFetch("/api/dashboards/overview", { method: "GET" });
+        const cardsHost = $("metric-cards");
+        cardsHost.innerHTML = "";
+        for (const card of data.cards || []) {
+          const div = document.createElement("div");
+          div.className = "panel metric";
+          div.innerHTML = `<div class="n">${card.name}</div><div class="k">${card.value}</div>`;
+          cardsHost.appendChild(div);
+        }
+        renderTopTables(data.tables || []);
+        renderChartFromTable(data.tables?.[0], "chart-a", "chart-title-a");
+        renderChartFromTable(data.tables?.[1], "chart-b", "chart-title-b");
+        await renderCountryFlowMap(data.tables || []);
+        setMessage("main-msg", "", true);
+      } catch (err) {
+        setMessage("main-msg", err.message || "Failed to load dashboard.");
+        throw err;
       }
-      renderTopTables(data.tables || []);
-      renderChartFromTable(data.tables?.[0], "chart-a", "chart-title-a");
-      renderChartFromTable(data.tables?.[1], "chart-b", "chart-title-b");
-      await renderCountryFlowMap(data.tables || []);
     }
 
     function renderChartFromTable(table, chartId, titleId) {

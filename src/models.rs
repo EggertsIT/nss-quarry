@@ -76,7 +76,7 @@ pub struct PcapAnalyzeResponse {
     pub truncated_ips: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct DashboardResponse {
     pub name: String,
     pub generated_at: DateTime<Utc>,
@@ -107,13 +107,13 @@ pub struct SchemaResponse {
     pub generated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct MetricCard {
     pub name: String,
     pub value: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct TableBlock {
     pub name: String,
     pub columns: Vec<String>,

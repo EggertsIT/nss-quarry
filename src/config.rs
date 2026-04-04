@@ -417,7 +417,7 @@ impl Default for QueryConfig {
             max_days_per_query: 7,
             default_limit: 200,
             max_rows: 2000,
-            timeout_ms: 10_000,
+            timeout_ms: 120_000,
             default_columns: vec![
                 "time".to_string(),
                 "action".to_string(),
