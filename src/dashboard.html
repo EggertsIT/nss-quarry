@@ -115,6 +115,47 @@
     th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; vertical-align: top; }
     th { background: rgba(244, 249, 255, 0.92); color: #2b3a4a; position: sticky; top: 0; z-index: 1; }
     tr:last-child td { border-bottom: 0; }
+    .panel-full-bleed {
+      width: calc(100vw - 40px);
+      margin-left: calc(50% - 50vw + 20px);
+      margin-right: calc(50% - 50vw + 20px);
+    }
+    .results-table-wrap {
+      max-height: 72vh;
+    }
+    .results-table {
+      table-layout: auto;
+      min-width: 100%;
+    }
+    .results-table th,
+    .results-table td {
+      padding: 10px 12px;
+      white-space: nowrap;
+      max-width: 380px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .results-table th.sticky-col {
+      z-index: 3;
+      background: rgba(235, 244, 255, 0.98);
+      box-shadow: 1px 0 0 rgba(185, 204, 228, 0.65);
+    }
+    .results-table td.sticky-col {
+      z-index: 2;
+      position: sticky;
+      background: rgba(248, 252, 255, 0.98);
+      box-shadow: 1px 0 0 rgba(185, 204, 228, 0.55);
+    }
+    @media (max-width: 1020px) {
+      .panel-full-bleed {
+        width: auto;
+        margin-left: 0;
+        margin-right: 0;
+      }
+      .results-table-wrap {
+        max-height: 64vh;
+      }
+    }
     .chart {
       display: flex;
       flex-direction: column;
@@ -372,10 +413,10 @@
         <div class="map-caption" id="search-flow-map-meta">Run a search to render source->destination country flows.</div>
       </div>
 
-      <div class="panel" style="margin-top: 14px;">
+      <div class="panel panel-full-bleed" style="margin-top: 14px;">
         <h3>Search Results</h3>
         <div class="muted" id="result-meta"></div>
-        <div id="results" class="table-wrap" style="margin-top: 8px;"></div>
+        <div id="results" class="table-wrap results-table-wrap" style="margin-top: 8px;"></div>
       </div>
       </div>
 
@@ -1173,13 +1214,25 @@
       }
     }
 
-    function buildTable(columns, rows) {
+    function buildTable(columns, rows, options = {}) {
       const table = document.createElement("table");
+      if (options.tableClass) {
+        table.classList.add(options.tableClass);
+      }
+      const stickyColumns = Array.isArray(options.stickyColumns)
+        ? new Set(options.stickyColumns.map((c) => String(c).toLowerCase()))
+        : new Set();
+      const stickyIndexes = [];
       const thead = document.createElement("thead");
       const trh = document.createElement("tr");
-      for (const c of columns) {
+      for (const [idx, c] of columns.entries()) {
         const th = document.createElement("th");
         th.textContent = c;
+        if (stickyColumns.has(String(c).toLowerCase())) {
+          th.classList.add("sticky-col");
+          th.dataset.stickyIndex = String(idx);
+          stickyIndexes.push(idx);
+        }
         trh.appendChild(th);
       }
       thead.appendChild(trh);
@@ -1187,15 +1240,42 @@
       const tbody = document.createElement("tbody");
       for (const row of rows) {
         const tr = document.createElement("tr");
-        for (const cell of row) {
+        for (const [idx, cell] of row.entries()) {
           const td = document.createElement("td");
-          td.textContent = cell == null ? "" : String(cell);
+          const value = cell == null ? "" : String(cell);
+          td.textContent = value;
+          td.title = value;
+          if (stickyIndexes.includes(idx)) {
+            td.classList.add("sticky-col");
+            td.dataset.stickyIndex = String(idx);
+          }
           tr.appendChild(td);
         }
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
+      if (stickyIndexes.length > 0) {
+        applyStickyColumnOffsets(table, stickyIndexes);
+      }
       return table;
+    }
+
+    function applyStickyColumnOffsets(table, stickyIndexes) {
+      const headerCells = Array.from(table.querySelectorAll("thead th"));
+      const sorted = [...new Set(stickyIndexes)].sort((a, b) => a - b);
+      let leftPx = 0;
+      for (const idx of sorted) {
+        const headerCell = headerCells[idx];
+        if (!headerCell) continue;
+        const left = `${leftPx}px`;
+        headerCell.style.position = "sticky";
+        headerCell.style.left = left;
+        const bodyCells = table.querySelectorAll(`tbody td[data-sticky-index="${idx}"]`);
+        for (const cell of bodyCells) {
+          cell.style.left = left;
+        }
+        leftPx += headerCell.getBoundingClientRect().width;
+      }
     }
 
     function formatAuditMetadata(meta) {
@@ -1437,7 +1517,10 @@
       }
       const columns = Object.keys(rows[0]);
       const raw = rows.map(r => columns.map(c => r[c] == null ? "" : String(r[c])));
-      host.appendChild(buildTable(columns, raw));
+      host.appendChild(buildTable(columns, raw, {
+        tableClass: "results-table",
+        stickyColumns: ["time", "action"],
+      }));
       await renderSearchFlowMap(rows);
     }
 
