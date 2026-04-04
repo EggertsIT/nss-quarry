@@ -6,73 +6,174 @@
   <title>NSS Quarry Dashboard</title>
   <style>
     :root {
-      --bg: #edf2f8;
-      --panel: rgba(255, 255, 255, 0.62);
-      --ink: #0f1f33;
-      --muted: #566379;
-      --line: rgba(175, 196, 223, 0.55);
-      --accent: #1572d6;
-      --accent-soft: rgba(177, 216, 255, 0.35);
-      --warn: #b45309;
-      --ok: #15803d;
-      --danger: #b91c1c;
-      --glass-shadow: 0 10px 30px rgba(26, 59, 110, 0.12);
+      --bg: #eef4fb;
+      --bg-soft: #f7fbff;
+      --panel: rgba(248, 251, 255, 0.96);
+      --panel-alt: rgba(240, 247, 255, 0.98);
+      --ink: #11253f;
+      --ink-strong: #0b1b31;
+      --muted: #617892;
+      --line: rgba(193, 214, 238, 0.92);
+      --line-strong: rgba(161, 191, 226, 0.95);
+      --accent: #1f78d8;
+      --accent-strong: #155aad;
+      --accent-soft: rgba(47, 144, 245, 0.12);
+      --navy: #0f3a6f;
+      --cyan: #34c3ff;
+      --warn: #b7791f;
+      --ok: #127c67;
+      --danger: #c0384b;
+      --panel-shadow: 0 18px 38px rgba(26, 67, 124, 0.08);
+      --panel-shadow-soft: 0 10px 24px rgba(21, 54, 105, 0.05);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "SF Pro Display", "Avenir Next", "Nunito Sans", "Segoe UI", sans-serif;
+      font-family: "SF Pro Display", "Avenir Next", "IBM Plex Sans", "Segoe UI", sans-serif;
       color: var(--ink);
       background:
-        radial-gradient(1400px 700px at 120% -20%, #c8ddff 0%, transparent 60%),
-        radial-gradient(1100px 650px at -10% 5%, #d7f2ff 0%, transparent 58%),
-        linear-gradient(180deg, #f7faff 0%, #e9eff8 100%);
+        radial-gradient(980px 480px at 110% -5%, rgba(111, 173, 255, 0.18) 0%, transparent 65%),
+        radial-gradient(840px 420px at -10% 0%, rgba(105, 224, 255, 0.12) 0%, transparent 58%),
+        linear-gradient(180deg, #f7fbff 0%, #edf3fa 52%, #e7eef7 100%);
+      background-attachment: fixed;
       min-height: 100vh;
+      position: relative;
     }
-    .wrap { max-width: 1320px; margin: 0 auto; padding: 20px; }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.18)),
+        repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent 95px,
+          rgba(117, 157, 204, 0.045) 96px,
+          transparent 97px
+        ),
+        repeating-linear-gradient(
+          180deg,
+          transparent 0,
+          transparent 95px,
+          rgba(117, 157, 204, 0.04) 96px,
+          transparent 97px
+        );
+      opacity: 0.55;
+    }
+    .wrap { max-width: 1420px; margin: 0 auto; padding: 22px 24px 42px; position: relative; z-index: 1; }
     .hero {
       display: flex;
       justify-content: space-between;
       align-items: center;
       gap: 16px;
-      margin-bottom: 14px;
+      margin-bottom: 16px;
+      padding: 22px 24px;
+      border-radius: 26px;
+      border: 1px solid var(--line-strong);
+      background:
+        radial-gradient(420px 190px at 100% 0%, rgba(41, 124, 228, 0.15), transparent 72%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(239, 247, 255, 0.94));
+      box-shadow: var(--panel-shadow);
+      position: relative;
+      overflow: hidden;
     }
-    h1 { margin: 0; font-size: 1.8rem; letter-spacing: 0.2px; }
-    .sub { color: var(--muted); font-size: 0.95rem; margin-top: 4px; }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -80px -110px auto;
+      width: 300px;
+      height: 300px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(61, 160, 255, 0.14) 0%, transparent 68%);
+      pointer-events: none;
+    }
+    h1 { margin: 0; font-size: 1.95rem; letter-spacing: -0.02em; color: var(--ink-strong); }
+    .sub { color: var(--muted); font-size: 0.96rem; margin-top: 6px; max-width: 760px; line-height: 1.45; }
     .badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      border: 1px solid var(--line);
-      background: var(--panel);
-      padding: 6px 10px;
+      border: 1px solid var(--line-strong);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(240, 247, 255, 0.92));
+      padding: 7px 12px;
       border-radius: 999px;
       color: var(--muted);
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       white-space: nowrap;
+      box-shadow: 0 4px 14px rgba(26, 67, 124, 0.06);
     }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+    .badge strong {
+      color: var(--navy);
+      font-weight: 700;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #7cffd7 0%, #2bbf95 45%, #127c67 100%);
+      box-shadow: 0 0 0 4px rgba(18, 124, 103, 0.12);
+    }
     .grid { display: grid; gap: 14px; }
     .cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
     .two { grid-template-columns: 1.6fr 1fr; }
     .panel {
-      background: var(--panel);
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(244, 249, 255, 0.95)),
+        linear-gradient(180deg, rgba(233, 243, 255, 0.75), rgba(248, 251, 255, 0));
       border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 14px;
-      backdrop-filter: blur(18px) saturate(135%);
-      -webkit-backdrop-filter: blur(18px) saturate(135%);
-      box-shadow: var(--glass-shadow);
+      border-radius: 22px;
+      padding: 16px;
+      box-shadow: var(--panel-shadow-soft);
+      position: relative;
+      overflow: hidden;
     }
-    .panel h2, .panel h3 { margin: 0 0 10px 0; font-size: 1rem; }
+    .panel::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.12));
+      pointer-events: none;
+    }
+    .panel h2, .panel h3 {
+      margin: 0 0 12px 0;
+      font-size: 0.98rem;
+      color: var(--ink-strong);
+      letter-spacing: 0.01em;
+    }
     .metric {
       background:
-        linear-gradient(150deg, rgba(255, 255, 255, 0.78), rgba(244, 250, 255, 0.56)),
-        radial-gradient(220px 130px at 100% -10%, rgba(58, 137, 255, 0.14), transparent 70%);
+        radial-gradient(240px 120px at 100% -10%, rgba(46, 144, 245, 0.18), transparent 72%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 255, 0.95));
+      border-color: rgba(184, 207, 233, 0.95);
+      min-height: 112px;
     }
-    .metric .k { font-size: 1.45rem; font-weight: 700; }
-    .metric .n { color: var(--muted); font-size: 0.86rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .metric .k {
+      font-size: 1.7rem;
+      font-weight: 760;
+      color: var(--navy);
+      letter-spacing: -0.02em;
+      margin-top: 14px;
+    }
+    .metric .n {
+      color: var(--muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+      font-weight: 700;
+    }
     .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .session-bar {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 248, 255, 0.97));
+    }
+    .session-bar .muted strong {
+      color: var(--navy);
+    }
     .toolbar .spacer { flex: 1 1 auto; }
     .menu {
       display: flex;
@@ -90,33 +191,55 @@
       margin-left: auto;
       justify-content: flex-end;
     }
+    .nav-shell {
+      padding: 10px 12px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 248, 255, 0.96));
+    }
     .menu button.active {
-      background: linear-gradient(140deg, #1e80e2, #1470d0);
-      border-color: #186cc2;
+      background: linear-gradient(135deg, #1c76d7 0%, #1557a9 100%);
+      border-color: #134b92;
       color: #fff;
+      box-shadow: 0 10px 20px rgba(28, 94, 171, 0.22);
+    }
+    .menu button {
+      min-height: 40px;
+      padding: 9px 14px;
+      font-weight: 600;
+      color: var(--navy);
     }
     label { font-size: 0.82rem; color: var(--muted); display: block; margin-bottom: 4px; }
     input, select, button, textarea {
       font: inherit;
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 8px 11px;
-      background: rgba(255, 255, 255, 0.72);
+      border-radius: 14px;
+      padding: 9px 12px;
+      background: rgba(255, 255, 255, 0.92);
       color: var(--ink);
     }
     input, select { width: 100%; }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: rgba(55, 135, 226, 0.8);
+      box-shadow: 0 0 0 4px rgba(47, 144, 245, 0.14);
+    }
     button {
       cursor: pointer;
       transition: 0.2s ease;
     }
     button.primary {
-      background: linear-gradient(140deg, #1e80e2, #1470d0);
-      border-color: #186cc2;
+      background: linear-gradient(135deg, #2283e5 0%, #1557a9 100%);
+      border-color: #175ba7;
       color: #fff;
-      box-shadow: 0 6px 18px rgba(25, 113, 214, 0.26);
+      box-shadow: 0 10px 22px rgba(25, 96, 179, 0.25);
     }
-    button.primary:hover { transform: translateY(-1px); box-shadow: 0 10px 20px rgba(25, 113, 214, 0.3); }
-    button.ghost:hover { background: rgba(255, 255, 255, 0.9); }
+    button.primary:hover { transform: translateY(-1px); box-shadow: 0 14px 24px rgba(25, 96, 179, 0.3); }
+    button.ghost {
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 248, 255, 0.92));
+      color: var(--navy);
+      border-color: rgba(185, 206, 229, 0.95);
+    }
+    button.ghost:hover { background: rgba(250, 253, 255, 1); border-color: rgba(143, 181, 223, 0.95); }
     .form-grid {
       display: grid;
       gap: 8px;
@@ -140,7 +263,13 @@
     }
     .message { margin: 8px 0 0 0; color: var(--danger); font-size: 0.9rem; min-height: 1.3em; }
     .ok-msg { color: var(--ok); }
-    .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid rgba(195, 214, 238, 0.98);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+    }
     .top-tables-grid {
       display: grid;
       gap: 12px;
@@ -149,26 +278,51 @@
     }
     .top-table-card {
       min-width: 0;
-      padding: 12px;
-      border-radius: 14px;
-      border: 1px solid rgba(174, 197, 226, 0.7);
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(183, 206, 232, 0.88);
       background:
-        linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(246, 250, 255, 0.72)),
-        radial-gradient(220px 130px at 100% -10%, rgba(58, 137, 255, 0.08), transparent 70%);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+        radial-gradient(240px 120px at 100% -10%, rgba(41, 138, 235, 0.1), transparent 72%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(245, 249, 255, 0.9));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
     }
     .top-table-card h3 {
-      margin-bottom: 8px;
-      font-size: 0.95rem;
+      margin-bottom: 10px;
+      font-size: 0.92rem;
+      letter-spacing: 0.02em;
     }
     .top-table-card .table-wrap {
       max-height: 320px;
-      background: rgba(255, 255, 255, 0.58);
+      background: rgba(255, 255, 255, 0.96);
+    }
+    .tables-shell {
+      padding: 18px;
+      background:
+        radial-gradient(300px 120px at 100% -10%, rgba(52, 195, 255, 0.08), transparent 72%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 249, 255, 0.96));
     }
     table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; vertical-align: top; }
-    th { background: rgba(244, 249, 255, 0.92); color: #2b3a4a; position: sticky; top: 0; z-index: 1; }
+    th, td {
+      border-bottom: 1px solid rgba(211, 226, 243, 0.92);
+      text-align: left;
+      padding: 10px 11px;
+      vertical-align: top;
+    }
+    th {
+      background: linear-gradient(180deg, rgba(244, 249, 255, 0.98), rgba(235, 244, 255, 0.98));
+      color: #27466e;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
     tr:last-child td { border-bottom: 0; }
+    tbody tr:hover td {
+      background: rgba(41, 138, 235, 0.05);
+    }
     .panel-full-bleed {
       width: calc(100vw - 40px);
       margin-left: calc(50% - 50vw + 20px);
@@ -184,10 +338,11 @@
       margin-top: 10px;
     }
     .insight-card {
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: rgba(251, 254, 255, 0.82);
-      padding: 10px;
+      border: 1px solid rgba(188, 209, 232, 0.92);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(253, 254, 255, 0.96), rgba(245, 249, 255, 0.94));
+      padding: 12px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
     }
     .insight-card h4 {
       margin: 0 0 8px 0;
@@ -235,14 +390,14 @@
     }
     .results-table th.sticky-col {
       z-index: 3;
-      background: rgba(235, 244, 255, 0.98);
-      box-shadow: 1px 0 0 rgba(185, 204, 228, 0.65);
+      background: rgba(235, 244, 255, 0.99);
+      box-shadow: 1px 0 0 rgba(177, 201, 229, 0.72);
     }
     .results-table td.sticky-col {
       z-index: 2;
       position: sticky;
-      background: rgba(248, 252, 255, 0.98);
-      box-shadow: 1px 0 0 rgba(185, 204, 228, 0.55);
+      background: rgba(248, 252, 255, 0.99);
+      box-shadow: 1px 0 0 rgba(177, 201, 229, 0.62);
     }
     @media (max-width: 1020px) {
       .panel-full-bleed {
@@ -266,30 +421,202 @@
       .top-tables-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+      .hero {
+        flex-direction: column;
+        align-items: flex-start;
+      }
     }
     @media (max-width: 720px) {
       .top-tables-grid {
         grid-template-columns: 1fr;
       }
+      .wrap {
+        padding-left: 14px;
+        padding-right: 14px;
+      }
+      .hero {
+        padding: 18px 18px;
+      }
+      h1 {
+        font-size: 1.6rem;
+      }
+    }
+    .chart-panel {
+      padding: 18px;
+      background:
+        radial-gradient(260px 130px at 100% -10%, rgba(52, 195, 255, 0.1), transparent 72%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 248, 255, 0.96));
     }
     .chart {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 10px;
+      min-height: 248px;
+      position: relative;
+    }
+    .chart-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-height: 100%;
+    }
+    .chart-summary {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .chart-chip {
+      border: 1px solid rgba(186, 210, 236, 0.88);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.97), rgba(240, 247, 255, 0.94));
+    }
+    .chart-chip-label {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+    .chart-chip-value {
+      font-size: 1rem;
+      color: var(--navy);
+      font-weight: 740;
+      line-height: 1.15;
+    }
+    .chart-series {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 10px 12px;
+      border-radius: 16px;
+      border: 1px solid rgba(188, 210, 233, 0.74);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(242, 248, 255, 0.9));
+    }
+    .chart-rank {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(20, 90, 173, 0.1), rgba(52, 195, 255, 0.08));
+      color: var(--accent-strong);
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-row-main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .chart-row-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .chart-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--ink-strong);
+      font-weight: 600;
+    }
+    .chart-percentage {
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .chart-value {
+      color: var(--navy);
+      font-size: 0.95rem;
+      font-weight: 740;
+      font-variant-numeric: tabular-nums;
+      min-width: 78px;
+      text-align: right;
+    }
+    .chart-track {
+      position: relative;
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background:
+        linear-gradient(90deg, rgba(207, 224, 244, 0.78), rgba(227, 238, 250, 0.9));
+      border: 1px solid rgba(194, 213, 235, 0.76);
+    }
+    .chart-track::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent calc(20% - 1px),
+          rgba(255, 255, 255, 0.28) calc(20% - 1px),
+          rgba(255, 255, 255, 0.28) 20%
+        );
+      pointer-events: none;
+    }
+    .chart-fill {
+      position: relative;
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #1d76d7 0%, #1f9be9 62%, #34c3ff 100%);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.45),
+        0 0 18px rgba(52, 195, 255, 0.22);
+    }
+    .chart-fill::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent 70%);
+    }
+    .chart-empty {
+      display: grid;
+      place-items: center;
       min-height: 220px;
+      border: 1px dashed rgba(173, 197, 225, 0.9);
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(246, 250, 255, 0.86), rgba(239, 246, 255, 0.88));
+      color: var(--muted);
     }
     .map-panel {
-      min-height: 400px;
+      min-height: 420px;
+      padding: 18px;
+      background:
+        radial-gradient(360px 150px at 100% -10%, rgba(31, 120, 216, 0.11), transparent 70%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 248, 255, 0.96));
     }
     .network-map-wrap {
       position: relative;
-      border: 1px solid var(--line);
-      border-radius: 12px;
-      background: linear-gradient(180deg, rgba(251, 253, 255, 0.98), rgba(243, 248, 254, 0.9));
+      border: 1px solid rgba(185, 207, 233, 0.96);
+      border-radius: 18px;
+      background:
+        radial-gradient(420px 180px at 50% 0%, rgba(51, 179, 255, 0.1), transparent 72%),
+        linear-gradient(180deg, rgba(248, 252, 255, 0.99), rgba(235, 243, 252, 0.98));
       overflow: hidden;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
     }
     .map-canvas {
-      min-height: 280px;
+      min-height: 340px;
+      background:
+        radial-gradient(700px 280px at 50% 0%, rgba(67, 140, 225, 0.08), transparent 70%),
+        linear-gradient(180deg, rgba(247, 251, 255, 0.98), rgba(230, 240, 250, 0.97));
     }
     .flow-map-svg {
       width: 100%;
@@ -304,46 +631,31 @@
     }
     .map-controls {
       position: absolute;
-      top: 8px;
-      right: 8px;
+      top: 12px;
+      right: 12px;
       z-index: 3;
       display: flex;
       gap: 6px;
     }
     .map-controls button {
-      min-width: 34px;
-      padding: 6px 8px;
-      border-radius: 9px;
-      font-size: 0.85rem;
-      background: rgba(255, 255, 255, 0.9);
+      min-width: 38px;
+      padding: 7px 10px;
+      border-radius: 12px;
+      font-size: 0.84rem;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.95);
     }
     .map-caption {
-      margin-top: 8px;
-      font-size: 0.82rem;
+      margin-top: 10px;
+      font-size: 0.8rem;
       color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
     }
     .map-empty {
       color: var(--muted);
       font-size: 0.9rem;
-      padding: 10px;
-    }
-    .bar-row {
-      display: grid;
-      grid-template-columns: minmax(120px, 1fr) 5fr auto;
-      gap: 8px;
-      align-items: center;
-      font-size: 0.84rem;
-    }
-    .bar {
-      background: rgba(221, 233, 248, 0.92);
-      border-radius: 8px;
-      overflow: hidden;
-      height: 14px;
-    }
-    .bar > span {
-      display: block;
-      height: 100%;
-      background: linear-gradient(90deg, #1d81e6, #3b9cff);
+      padding: 14px;
     }
     .muted { color: var(--muted); }
     .hidden { display: none !important; }
@@ -360,18 +672,21 @@
       color: var(--muted);
       padding: 6px 10px;
       border-radius: 999px;
-      background: var(--accent-soft);
-      border: 1px solid rgba(152, 195, 247, 0.75);
+      background: linear-gradient(180deg, rgba(237, 246, 255, 0.94), rgba(226, 239, 255, 0.92));
+      border: 1px solid rgba(161, 198, 238, 0.88);
       display: inline-block;
     }
     @media (max-width: 1020px) {
       .two { grid-template-columns: 1fr; }
+      .chart-summary {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <div class="hero">
+    <div class="hero hero-shell">
       <div>
         <h1>NSS Quarry</h1>
         <div class="sub">Interactive security operations dashboard for NSS Parquet data</div>
@@ -408,14 +723,14 @@
     </section>
 
     <section id="app-panel" class="hidden">
-      <div class="toolbar panel" style="margin-bottom: 14px;">
+      <div class="toolbar panel session-bar" style="margin-bottom: 14px;">
         <div class="muted">Signed in as <strong id="whoami"></strong></div>
         <div class="spacer"></div>
         <button id="refresh-all" class="ghost">Refresh</button>
         <button id="logout" class="ghost">Logout</button>
       </div>
 
-      <div class="panel" style="margin-bottom: 14px;">
+      <div class="panel nav-shell" style="margin-bottom: 14px;">
         <div class="menu">
           <div class="menu-group left">
             <button id="menu-main" class="ghost active" type="button">Main</button>
@@ -433,11 +748,11 @@
       <div id="metric-cards" class="grid cards"></div>
 
       <div class="grid two" style="margin-top: 14px;">
-        <div class="panel">
+        <div class="panel chart-panel">
           <h3 id="chart-title-a">Top Chart A</h3>
           <div id="chart-a" class="chart"></div>
         </div>
-        <div class="panel">
+        <div class="panel chart-panel">
           <h3 id="chart-title-b">Top Chart B</h3>
           <div id="chart-b" class="chart"></div>
         </div>
@@ -456,7 +771,7 @@
         <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
       </div>
 
-      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+      <div class="panel panel-full-bleed tables-shell" style="margin-top: 14px;">
         <h3>Top Tables</h3>
         <div id="top-tables" class="top-tables-grid"></div>
       </div>
@@ -786,6 +1101,24 @@
       return "Local Users";
     }
 
+    function formatDisplayName(value) {
+      const acronyms = new Set([
+        "api", "cip", "csv", "dlp", "dns", "http", "https", "ip", "ips", "mtls",
+        "nss", "ocsp", "oidc", "parquet", "pcap", "pcapng", "respcode", "sip",
+        "soc", "sni", "ssl", "tcp", "tls", "url", "zia"
+      ]);
+      return String(value || "")
+        .split(/[_\s]+/)
+        .filter(Boolean)
+        .map((part) => {
+          const lower = part.toLowerCase();
+          if (acronyms.has(lower)) return lower.toUpperCase();
+          if (/^\d+h$/.test(lower)) return lower.toUpperCase();
+          return lower.charAt(0).toUpperCase() + lower.slice(1);
+        })
+        .join(" ");
+    }
+
     function toLocalInputValue(date) {
       const tzOffsetMs = date.getTimezoneOffset() * 60000;
       return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 16);
@@ -984,25 +1317,62 @@
       host.innerHTML = "";
       if (!table || !Array.isArray(table.rows) || table.rows.length === 0) {
         title.textContent = "No data";
-        host.innerHTML = "<div class='muted'>No values available.</div>";
+        host.innerHTML = "<div class='chart-empty'>No values available for this chart.</div>";
         return;
       }
-      title.textContent = table.name;
-      const values = table.rows.map(r => Number.parseInt(r[1], 10) || 0);
+      title.textContent = formatDisplayName(table.name);
+      const series = table.rows
+        .map((r) => ({
+          label: r?.[0] || "None",
+          value: Number.parseInt(r?.[1], 10) || 0,
+        }))
+        .filter((row) => row.value >= 0);
+      const values = series.map((row) => row.value);
       const max = Math.max(1, ...values);
-      for (const row of table.rows.slice(0, 12)) {
-        const label = row[0] || "None";
-        const value = Number.parseInt(row[1], 10) || 0;
-        const width = Math.round((value / max) * 100);
+      const total = values.reduce((sum, value) => sum + value, 0);
+      const leader = series[0] || { label: "None", value: 0 };
+
+      const shell = document.createElement("div");
+      shell.className = "chart-shell";
+      shell.innerHTML = `
+        <div class="chart-summary">
+          <div class="chart-chip">
+            <div class="chart-chip-label">Top Signal</div>
+            <div class="chart-chip-value" title="${leader.label}">${leader.label}</div>
+          </div>
+          <div class="chart-chip">
+            <div class="chart-chip-label">Observed Volume</div>
+            <div class="chart-chip-value">${total.toLocaleString()}</div>
+          </div>
+          <div class="chart-chip">
+            <div class="chart-chip-label">Distinct Entries</div>
+            <div class="chart-chip-value">${series.length.toLocaleString()}</div>
+          </div>
+        </div>
+      `;
+
+      const list = document.createElement("div");
+      list.className = "chart-series";
+      for (const [index, row] of series.slice(0, 8).entries()) {
+        const width = Math.max(3, Math.round((row.value / max) * 100));
+        const share = total > 0 ? (row.value / total) * 100 : 0;
         const line = document.createElement("div");
-        line.className = "bar-row";
+        line.className = "chart-row";
         line.innerHTML = `
-          <div title="${label}">${label}</div>
-          <div class="bar"><span style="width:${width}%"></span></div>
-          <div>${value}</div>
+          <div class="chart-rank">${String(index + 1).padStart(2, "0")}</div>
+          <div class="chart-row-main">
+            <div class="chart-row-top">
+              <div class="chart-label" title="${row.label}">${row.label}</div>
+              <div class="chart-percentage">${share.toFixed(share >= 10 ? 0 : 1)}%</div>
+            </div>
+            <div class="chart-track"><span class="chart-fill" style="width:${width}%"></span></div>
+          </div>
+          <div class="chart-value">${row.value.toLocaleString()}</div>
         `;
-        host.appendChild(line);
+        list.appendChild(line);
       }
+      shell.appendChild(list);
+      host.appendChild(shell);
     }
 
     function renderTopTables(tables) {
@@ -1015,7 +1385,7 @@
       for (const table of tables.filter(t => t && t.name !== "country_flows_24h")) {
         const block = document.createElement("div");
         block.className = "top-table-card";
-        block.innerHTML = `<h3>${table.name}</h3>`;
+        block.innerHTML = `<h3>${formatDisplayName(table.name)}</h3>`;
         const wrap = document.createElement("div");
         wrap.className = "table-wrap";
         wrap.appendChild(buildTable(table.columns || [], table.rows || []));
@@ -1229,7 +1599,7 @@
         for (const feature of features) {
           const featurePaths = buildGeometryPaths(feature?.geometry, width, height);
           for (const d of featurePaths) {
-            paths.push(`<path d="${d}" fill="#d8dee6" stroke="#c6ced9" stroke-width="0.55" />`);
+            paths.push(`<path d="${d}" fill="#d8e5f1" stroke="#b6cade" stroke-width="0.55" />`);
           }
         }
         if (paths.length > 0) {
@@ -1240,7 +1610,7 @@
       } catch (_) {}
 
       const fallback = FALLBACK_WORLD_LAND_PATHS
-        .map((p) => `<path d="${p}" fill="#d8dee6" stroke="#c6ced9" stroke-width="0.9" />`)
+        .map((p) => `<path d="${p}" fill="#d8e5f1" stroke="#b6cade" stroke-width="0.9" />`)
         .join("");
       worldLandLayerCache.set(cacheKey, fallback);
       return fallback;
@@ -1395,10 +1765,14 @@
         const cx = (src.x + dst.x) / 2;
         const cy = Math.min(src.y, dst.y) - curvature;
         const norm = Math.sqrt(flow.count / maxCount);
-        const widthPx = (0.35 + norm * 1.55).toFixed(2);
-        const opacity = (0.17 + norm * 0.68).toFixed(3);
+        const widthPx = (0.55 + norm * 1.75).toFixed(2);
+        const glowWidth = (1.6 + norm * 3.1).toFixed(2);
+        const opacity = (0.24 + norm * 0.62).toFixed(3);
         arcPaths.push(
-          `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#2684ff" stroke-opacity="${opacity}" stroke-width="${widthPx}" fill="none" stroke-linecap="round" />`
+          `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#7fd4ff" stroke-opacity="${(Number(opacity) * 0.2).toFixed(3)}" stroke-width="${glowWidth}" fill="none" stroke-linecap="round" />`
+        );
+        arcPaths.push(
+          `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#207ee0" stroke-opacity="${opacity}" stroke-width="${widthPx}" fill="none" stroke-linecap="round" />`
         );
 
         const srcKey = `${src.x.toFixed(1)},${src.y.toFixed(1)}`;
@@ -1412,37 +1786,51 @@
       for (const [key, weight] of nodeWeights.entries()) {
         const [x, y] = key.split(",").map(Number);
         const norm = Math.sqrt(weight / maxNode);
-        const radius = (0.8 + norm * 2.4).toFixed(2);
-        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="#46a1ff" fill-opacity="0.82" />`);
+        const radius = 0.8 + norm * 2.4;
+        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${(radius * 2.2).toFixed(2)}" fill="#7fd4ff" fill-opacity="0.12" />`);
+        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${(radius * 1.35).toFixed(2)}" fill="#dff4ff" fill-opacity="0.78" />`);
+        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${radius.toFixed(2)}" fill="#1f79d9" fill-opacity="0.95" />`);
       }
 
       const latLines = [-60, -30, 0, 30, 60]
         .map((lat) => {
           const y = projectEquirectangular(lat, 0, width, height).y.toFixed(1);
-          return `<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#dbe3ee" stroke-width="0.8" stroke-opacity="0.4" />`;
+          return `<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#cdddf0" stroke-width="0.8" stroke-opacity="0.55" />`;
         })
         .join("");
       const lonLines = [-120, -60, 0, 60, 120]
         .map((lon) => {
           const x = projectEquirectangular(0, lon, width, height).x.toFixed(1);
-          return `<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#dbe3ee" stroke-width="0.8" stroke-opacity="0.4" />`;
+          return `<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#cdddf0" stroke-width="0.8" stroke-opacity="0.55" />`;
         })
         .join("");
       const gridLines = `${latLines}${lonLines}`;
       const glowId = `${hostId.replace(/[^A-Za-z0-9_-]/g, "_")}-glow`;
+      const bgId = `${hostId.replace(/[^A-Za-z0-9_-]/g, "_")}-bg`;
+      const vignetteId = `${hostId.replace(/[^A-Za-z0-9_-]/g, "_")}-vignette`;
 
       const svg = `
         <svg class="flow-map-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Country flow map">
           <defs>
+            <linearGradient id="${bgId}" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#f8fbff" />
+              <stop offset="65%" stop-color="#ecf4fc" />
+              <stop offset="100%" stop-color="#e3edf8" />
+            </linearGradient>
+            <radialGradient id="${vignetteId}" cx="50%" cy="0%" r="90%">
+              <stop offset="0%" stop-color="#6dc9ff" stop-opacity="0.15" />
+              <stop offset="100%" stop-color="#143a69" stop-opacity="0" />
+            </radialGradient>
             <filter id="${glowId}">
-              <feGaussianBlur stdDeviation="1.35" result="blur"/>
+              <feGaussianBlur stdDeviation="1.55" result="blur"/>
               <feMerge>
                 <feMergeNode in="blur"></feMergeNode>
                 <feMergeNode in="SourceGraphic"></feMergeNode>
               </feMerge>
             </filter>
           </defs>
-          <rect x="0" y="0" width="${width}" height="${height}" fill="#f4f7fb" />
+          <rect x="0" y="0" width="${width}" height="${height}" fill="url(#${bgId})" />
+          <rect x="0" y="0" width="${width}" height="${height}" fill="url(#${vignetteId})" />
           <g class="zoom-layer">
             ${gridLines}
             <g>${land}</g>
