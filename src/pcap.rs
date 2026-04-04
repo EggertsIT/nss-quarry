@@ -1,8 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::File;
 use std::net::{Ipv4Addr, Ipv6Addr};
+use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use memmap2::MmapOptions;
 
 const PCAP_HEADER_LEN: usize = 24;
 const PCAP_RECORD_HEADER_LEN: usize = 16;
@@ -79,6 +82,23 @@ pub fn analyze_pcap_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
         return analyze_pcapng_bytes(data, max_ips);
     }
     analyze_classic_pcap_bytes(data, max_ips)
+}
+
+pub fn analyze_pcap_file(path: &Path, max_ips: usize) -> Result<PcapAnalysis> {
+    let file = File::open(path)
+        .map_err(|err| anyhow::anyhow!("failed to open pcap file for analysis: {err}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|err| anyhow::anyhow!("failed to read pcap metadata: {err}"))?;
+    if metadata.len() == 0 {
+        anyhow::bail!("pcap file is empty");
+    }
+    let map = {
+        // SAFETY: file is opened read-only and mapping is used as immutable bytes for parse-only analysis.
+        unsafe { MmapOptions::new().map(&file) }
+            .map_err(|err| anyhow::anyhow!("failed to memory-map pcap file: {err}"))?
+    };
+    analyze_pcap_bytes(&map, max_ips)
 }
 
 fn analyze_classic_pcap_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {

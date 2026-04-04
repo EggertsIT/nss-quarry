@@ -22,6 +22,7 @@ use axum_extra::extract::CookieJar;
 use chrono::Utc;
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
+use tokio::io::AsyncWriteExt;
 use tracing::{error, info};
 
 use crate::audit::AuditLogger;
@@ -32,7 +33,7 @@ use crate::models::{
     IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
     PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
-use crate::pcap::analyze_pcap_bytes;
+use crate::pcap::analyze_pcap_file;
 use crate::query::QueryService;
 use crate::webui::render_dashboard_html;
 
@@ -158,8 +159,7 @@ fn build_router(state: AppState) -> Router {
         .route("/api/export/csv", post(api_export_csv))
         .route(
             "/api/pcap/analyze",
-            post(api_pcap_analyze)
-                .layer(DefaultBodyLimit::max(MAX_PCAP_UPLOAD_BYTES + 1024 * 1024)),
+            post(api_pcap_analyze).layer(DefaultBodyLimit::max(pcap_upload_body_limit())),
         )
         .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
@@ -433,9 +433,14 @@ async fn api_export_csv(
     Ok(res)
 }
 
-const MAX_PCAP_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+const MAX_PCAP_UPLOAD_BYTES: u64 = 5_u64 * 1024 * 1024 * 1024;
 const DEFAULT_PCAP_MAX_IPS: usize = 500;
 const MAX_PCAP_MAX_IPS: usize = 5000;
+
+fn pcap_upload_body_limit() -> usize {
+    let with_slack = MAX_PCAP_UPLOAD_BYTES.saturating_add(1024 * 1024);
+    usize::try_from(with_slack).unwrap_or(usize::MAX)
+}
 
 async fn api_pcap_analyze(
     State(state): State<AppState>,
@@ -444,10 +449,11 @@ async fn api_pcap_analyze(
 ) -> Result<Json<PcapAnalyzeResponse>, AppError> {
     let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
     let mut file_name: Option<String> = None;
-    let mut pcap_bytes: Option<Vec<u8>> = None;
+    let mut pcap_path: Option<PathBuf> = None;
+    let mut uploaded_bytes: u64 = 0;
     let mut max_ips = DEFAULT_PCAP_MAX_IPS;
 
-    while let Some(field) = multipart
+    while let Some(mut field) = multipart
         .next_field()
         .await
         .map_err(AppError::bad_request)?
@@ -456,14 +462,25 @@ async fn api_pcap_analyze(
         match field_name.as_str() {
             "pcap" => {
                 file_name = field.file_name().map(|v| v.to_string());
-                let bytes = field.bytes().await.map_err(AppError::bad_request)?;
-                if bytes.len() > MAX_PCAP_UPLOAD_BYTES {
-                    return Err(AppError::bad_request(format!(
-                        "pcap is too large (max {} bytes)",
-                        MAX_PCAP_UPLOAD_BYTES
-                    )));
+                let path = std::env::temp_dir()
+                    .join(format!("nss-quarry-upload-{}.pcap", uuid::Uuid::new_v4()));
+                let mut file = tokio::fs::File::create(&path)
+                    .await
+                    .map_err(AppError::internal)?;
+                let mut size = 0_u64;
+                while let Some(chunk) = field.chunk().await.map_err(AppError::bad_request)? {
+                    size = size.saturating_add(chunk.len() as u64);
+                    if size > MAX_PCAP_UPLOAD_BYTES {
+                        let _ = tokio::fs::remove_file(&path).await;
+                        return Err(AppError::bad_request(format!(
+                            "pcap is too large (max {} bytes)",
+                            MAX_PCAP_UPLOAD_BYTES
+                        )));
+                    }
+                    file.write_all(&chunk).await.map_err(AppError::internal)?;
                 }
-                pcap_bytes = Some(bytes.to_vec());
+                pcap_path = Some(path);
+                uploaded_bytes = size;
             }
             "max_ips" => {
                 let value = field.text().await.map_err(AppError::bad_request)?;
@@ -475,12 +492,15 @@ async fn api_pcap_analyze(
         }
     }
 
-    let pcap_bytes =
-        pcap_bytes.ok_or_else(|| AppError::bad_request("multipart field 'pcap' is required"))?;
-    let summary = tokio::task::spawn_blocking(move || analyze_pcap_bytes(&pcap_bytes, max_ips))
-        .await
-        .map_err(AppError::internal)?
-        .map_err(AppError::bad_request)?;
+    let pcap_path =
+        pcap_path.ok_or_else(|| AppError::bad_request("multipart field 'pcap' is required"))?;
+    let analyze_path = pcap_path.clone();
+    let summary_result =
+        tokio::task::spawn_blocking(move || analyze_pcap_file(&analyze_path, max_ips))
+            .await
+            .map_err(AppError::internal)?;
+    let _ = tokio::fs::remove_file(&pcap_path).await;
+    let summary = summary_result.map_err(AppError::bad_request)?;
     let duration_seconds = (summary.time_to - summary.time_from).num_seconds().max(0);
 
     let response = PcapAnalyzeResponse {
@@ -510,6 +530,7 @@ async fn api_pcap_analyze(
                 "time_from": response.time_from,
                 "time_to": response.time_to,
                 "duration_seconds": response.duration_seconds,
+                "uploaded_bytes": uploaded_bytes,
                 "packet_count": response.packet_count,
                 "ip_packet_count": response.ip_packet_count,
                 "unique_destination_ip_count": response.unique_destination_ip_count,

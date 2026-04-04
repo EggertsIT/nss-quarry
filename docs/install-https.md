@@ -19,7 +19,7 @@ This guide installs `nss-quarry` with HTTPS enabled by default.
 - offers to grant `nssquarry` read access to Parquet data (ACL preferred, group fallback)
 - installs systemd unit `/etc/systemd/system/nss-quarry.service`
 - installs Nginx reverse proxy `/etc/nginx/conf.d/nss-quarry.conf`
-- sets nginx upload limit `client_max_body_size 110m` (supports app cap of `100 MiB` for PCAP Assist)
+- sets nginx upload limit `client_max_body_size 6g` (supports app cap of `5 GiB` for PCAP Assist)
 - when SELinux is `Enforcing`, sets `httpd_can_network_connect=1` so nginx can reach `127.0.0.1:9191`
 - writes install state file `/etc/nss-quarry/install-state.env` for clean uninstall/rollback
 - supports endpoint identity as DNS name or IPv4
