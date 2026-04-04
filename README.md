@@ -113,6 +113,7 @@ cp config.example.toml config.toml
 2. Set at least:
 - `data.parquet_root` to your `nss-to-parquet` output directory.
 - field mapping in `data.fields` (fresh-install defaults are aligned to `nss-to-parquet` `zscaler_web_v2_ops`, including `user_field="login"` and `url_field="url"`).
+  - `response_code_field` and `reason_field` drive quick filters in Search Logs (defaults: `respcode`, `reason`).
   - include `source_country_field` / `destination_country_field` for global flow map rendering (defaults: `srcip_country`, `dstip_country`).
 - `auth.mode`
 - auth settings for the chosen mode.

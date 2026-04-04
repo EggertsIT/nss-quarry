@@ -425,6 +425,8 @@
               <option value="Blocked">Blocked</option>
             </select>
           </div>
+          <div><label for="f-respcode">Response Code</label><input id="f-respcode" placeholder="403 or 403,407"></div>
+          <div><label for="f-reason">Reason</label><input id="f-reason" placeholder="low TLS version"></div>
           <div><label for="f-threat">Threat</label><input id="f-threat" placeholder="EICAR"></div>
           <div><label for="f-category">Category</label><input id="f-category" placeholder="Spyware Callback"></div>
           <div><label for="f-ip">CIP (Source IP)</label><input id="f-ip" placeholder="10.0.0.5"></div>
@@ -1479,6 +1481,8 @@
           user: normalizeFilterValue("f-user"),
           url: normalizeFilterValue("f-url"),
           action: normalizeFilterValue("f-action"),
+          response_code: normalizeFilterValue("f-respcode"),
+          reason: normalizeFilterValue("f-reason"),
           threat: normalizeFilterValue("f-threat"),
           category: normalizeFilterValue("f-category"),
           source_ip: normalizeFilterValue("f-ip"),

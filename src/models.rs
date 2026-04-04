@@ -36,6 +36,9 @@ pub struct SearchFilters {
     pub user: Option<String>,
     pub url: Option<String>,
     pub action: Option<String>,
+    #[serde(alias = "respcode")]
+    pub response_code: Option<String>,
+    pub reason: Option<String>,
     pub threat: Option<String>,
     pub category: Option<String>,
     #[serde(alias = "cip")]

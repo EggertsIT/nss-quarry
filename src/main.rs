@@ -618,6 +618,14 @@ async fn api_schema(
             mapped_from: state.cfg.data.fields.action_field.clone(),
         },
         SchemaFieldInfo {
+            name: "response_code_field".to_string(),
+            mapped_from: state.cfg.data.fields.response_code_field.clone(),
+        },
+        SchemaFieldInfo {
+            name: "reason_field".to_string(),
+            mapped_from: state.cfg.data.fields.reason_field.clone(),
+        },
+        SchemaFieldInfo {
             name: "threat_field".to_string(),
             mapped_from: state.cfg.data.fields.threat_field.clone(),
         },

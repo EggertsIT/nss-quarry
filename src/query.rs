@@ -563,6 +563,16 @@ fn build_search_sql(
         &fields.action_field,
         req.filters.action.as_deref(),
     );
+    apply_contains_or_multi_exact_filter(
+        &mut where_clauses,
+        &fields.response_code_field,
+        req.filters.response_code.as_deref(),
+    );
+    apply_filter(
+        &mut where_clauses,
+        &fields.reason_field,
+        req.filters.reason.as_deref(),
+    );
     apply_filter(
         &mut where_clauses,
         &fields.threat_field,
@@ -686,6 +696,8 @@ fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
     validate_filter_value(filters.user.as_deref(), re, false)?;
     validate_filter_value(filters.url.as_deref(), re, false)?;
     validate_filter_value(filters.action.as_deref(), re, false)?;
+    validate_filter_value(filters.response_code.as_deref(), re, true)?;
+    validate_filter_value(filters.reason.as_deref(), re, false)?;
     validate_filter_value(filters.threat.as_deref(), re, false)?;
     validate_filter_value(filters.category.as_deref(), re, false)?;
     validate_filter_value(filters.source_ip.as_deref(), re, true)?;

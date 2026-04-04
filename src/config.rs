@@ -67,6 +67,8 @@ impl AppConfig {
         validate_identifier(&self.data.fields.user_field)?;
         validate_identifier(&self.data.fields.url_field)?;
         validate_identifier(&self.data.fields.action_field)?;
+        validate_identifier(&self.data.fields.response_code_field)?;
+        validate_identifier(&self.data.fields.reason_field)?;
         validate_identifier(&self.data.fields.threat_field)?;
         validate_identifier(&self.data.fields.category_field)?;
         validate_identifier(&self.data.fields.source_ip_field)?;
@@ -187,6 +189,8 @@ pub struct FieldMap {
     pub user_field: String,
     pub url_field: String,
     pub action_field: String,
+    pub response_code_field: String,
+    pub reason_field: String,
     pub threat_field: String,
     pub category_field: String,
     pub source_ip_field: String,
@@ -204,6 +208,8 @@ impl Default for FieldMap {
             user_field: "login".to_string(),
             url_field: "url".to_string(),
             action_field: "action".to_string(),
+            response_code_field: "respcode".to_string(),
+            reason_field: "reason".to_string(),
             threat_field: "threatname".to_string(),
             category_field: "urlcat".to_string(),
             source_ip_field: "cip".to_string(),
