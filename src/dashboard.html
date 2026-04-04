@@ -108,6 +108,14 @@
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       align-items: end;
     }
+    .form-grid .field-wide {
+      grid-column: span 2;
+      min-width: 260px;
+    }
+    .form-grid input[type="datetime-local"] {
+      min-width: 240px;
+      font-variant-numeric: tabular-nums;
+    }
     .message { margin: 8px 0 0 0; color: var(--danger); font-size: 0.9rem; min-height: 1.3em; }
     .ok-msg { color: var(--ok); }
     .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
@@ -198,6 +206,10 @@
       }
       .results-table-wrap {
         max-height: 64vh;
+      }
+      .form-grid .field-wide {
+        grid-column: span 1;
+        min-width: 0;
       }
     }
     .chart {
@@ -412,8 +424,8 @@
       <div class="panel" style="margin-top: 14px;">
         <h3>Search Logs</h3>
         <form id="search-form" class="form-grid">
-          <div><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
-          <div><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
+          <div class="field-wide"><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
+          <div class="field-wide"><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
           <div><label for="limit">Limit</label><input id="limit" type="number" min="1" max="2000" value="200"></div>
           <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
           <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
