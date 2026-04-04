@@ -153,6 +153,9 @@ cargo run -- run --config ./config.toml
 
 ## API
 
+Full API reference with Python examples:
+- `docs/api.md`
+
 - `GET /healthz`
 - `GET /readyz`
 - `GET /auth/login` (OIDC modes)
