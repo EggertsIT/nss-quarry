@@ -236,6 +236,7 @@
       <div class="panel" style="margin-bottom: 14px;">
         <div class="menu">
           <button id="menu-main" class="ghost active" type="button">Main</button>
+          <button id="menu-search" class="ghost" type="button">Search</button>
           <button id="menu-ingestor" class="ghost" type="button">NSS Ingestor</button>
           <button id="menu-audit" class="ghost hidden" type="button">Audit</button>
         </div>
@@ -261,6 +262,19 @@
         <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
       </div>
 
+      <div class="grid two" style="margin-top: 14px;">
+        <div class="panel">
+          <h3>Top Tables</h3>
+          <div id="top-tables"></div>
+        </div>
+        <div class="panel">
+          <h3>Active Schema Mapping</h3>
+          <div id="schema-view"></div>
+        </div>
+      </div>
+      </div>
+
+      <div id="view-search" class="hidden">
       <div class="panel" style="margin-top: 14px;">
         <h3>PCAP Assist</h3>
         <form id="pcap-form" class="form-grid">
@@ -320,17 +334,6 @@
         <h3>Search Results</h3>
         <div class="muted" id="result-meta"></div>
         <div id="results" class="table-wrap" style="margin-top: 8px;"></div>
-      </div>
-
-      <div class="grid two" style="margin-top: 14px;">
-        <div class="panel">
-          <h3>Top Tables</h3>
-          <div id="top-tables"></div>
-        </div>
-        <div class="panel">
-          <h3>Active Schema Mapping</h3>
-          <div id="schema-view"></div>
-        </div>
       </div>
       </div>
 
@@ -486,16 +489,19 @@
       if (view === "ingestor" && !isAdminUser()) {
         view = "main";
       }
-      if (view !== "main" && view !== "ingestor" && view !== "audit") {
+      if (view !== "main" && view !== "search" && view !== "ingestor" && view !== "audit") {
         view = "main";
       }
       activeView = view;
       const isAudit = view === "audit" && isAdminUser();
       const isIngestor = view === "ingestor";
-      $("view-main").classList.toggle("hidden", isAudit || isIngestor);
+      const isSearch = view === "search";
+      $("view-main").classList.toggle("hidden", isAudit || isIngestor || isSearch);
+      $("view-search").classList.toggle("hidden", !isSearch);
       $("view-ingestor").classList.toggle("hidden", !isIngestor);
       $("view-audit").classList.toggle("hidden", !isAudit);
       $("menu-main").classList.toggle("active", view === "main");
+      $("menu-search").classList.toggle("active", isSearch);
       $("menu-ingestor").classList.toggle("active", isIngestor);
       $("menu-audit").classList.toggle("active", isAudit);
     }
@@ -1333,7 +1339,10 @@
 
     async function refreshAll() {
       await loadSchema();
-      const tasks = [loadDashboard(), runSearch()];
+      const tasks = [loadDashboard()];
+      if (activeView === "search") {
+        tasks.push(runSearch());
+      }
       if (activeView === "ingestor") {
         tasks.push(loadIngestorMeta());
       }
@@ -1386,6 +1395,16 @@
         try { await refreshAll(); } catch (err) { setMessage("search-msg", err.message || "Refresh failed"); }
       });
       $("menu-main").addEventListener("click", () => setView("main"));
+      $("menu-search").addEventListener("click", async () => {
+        setView("search");
+        if (latestSearchRequest) {
+          try {
+            await runSearch();
+          } catch (err) {
+            setMessage("search-msg", err.message || "Search failed");
+          }
+        }
+      });
       $("menu-ingestor").addEventListener("click", async () => {
         setView("ingestor");
         try {
