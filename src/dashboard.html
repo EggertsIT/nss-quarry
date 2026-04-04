@@ -125,15 +125,40 @@
       min-height: 400px;
     }
     .network-map-wrap {
+      position: relative;
       border: 1px solid var(--line);
       border-radius: 12px;
       background: linear-gradient(180deg, rgba(251, 253, 255, 0.98), rgba(243, 248, 254, 0.9));
       overflow: hidden;
     }
+    .map-canvas {
+      min-height: 280px;
+    }
     .flow-map-svg {
       width: 100%;
       height: auto;
       display: block;
+      cursor: grab;
+      touch-action: none;
+      user-select: none;
+    }
+    .flow-map-svg.is-dragging {
+      cursor: grabbing;
+    }
+    .map-controls {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      z-index: 3;
+      display: flex;
+      gap: 6px;
+    }
+    .map-controls button {
+      min-width: 34px;
+      padding: 6px 8px;
+      border-radius: 9px;
+      font-size: 0.85rem;
+      background: rgba(255, 255, 255, 0.9);
     }
     .map-caption {
       margin-top: 8px;
@@ -237,6 +262,7 @@
         <div class="menu">
           <button id="menu-main" class="ghost active" type="button">Main</button>
           <button id="menu-search" class="ghost" type="button">Search</button>
+          <button id="menu-config" class="ghost" type="button">Config</button>
           <button id="menu-ingestor" class="ghost" type="button">NSS Ingestor</button>
           <button id="menu-audit" class="ghost hidden" type="button">Audit</button>
         </div>
@@ -258,7 +284,14 @@
 
       <div class="panel map-panel" style="margin-top: 14px;">
         <h3>Global Country Flow Map (24h)</h3>
-        <div class="network-map-wrap" id="flow-map-wrap"></div>
+        <div class="network-map-wrap">
+          <div class="map-controls">
+            <button id="flow-map-zoom-in" type="button" class="ghost" title="Zoom in">+</button>
+            <button id="flow-map-zoom-out" type="button" class="ghost" title="Zoom out">-</button>
+            <button id="flow-map-zoom-reset" type="button" class="ghost" title="Reset zoom">Reset</button>
+          </div>
+          <div class="map-canvas" id="flow-map-wrap"></div>
+        </div>
         <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
       </div>
 
@@ -266,10 +299,6 @@
         <div class="panel">
           <h3>Top Tables</h3>
           <div id="top-tables"></div>
-        </div>
-        <div class="panel">
-          <h3>Active Schema Mapping</h3>
-          <div id="schema-view"></div>
         </div>
       </div>
       </div>
@@ -330,16 +359,30 @@
         <div id="search-msg" class="message"></div>
       </div>
 
+      <div class="panel map-panel" style="margin-top: 14px;">
+        <h3>Search Country Flow Map</h3>
+        <div class="network-map-wrap">
+          <div class="map-controls">
+            <button id="search-flow-map-zoom-in" type="button" class="ghost" title="Zoom in">+</button>
+            <button id="search-flow-map-zoom-out" type="button" class="ghost" title="Zoom out">-</button>
+            <button id="search-flow-map-zoom-reset" type="button" class="ghost" title="Reset zoom">Reset</button>
+          </div>
+          <div class="map-canvas" id="search-flow-map-wrap"></div>
+        </div>
+        <div class="map-caption" id="search-flow-map-meta">Run a search to render source->destination country flows.</div>
+      </div>
+
       <div class="panel" style="margin-top: 14px;">
         <h3>Search Results</h3>
         <div class="muted" id="result-meta"></div>
         <div id="results" class="table-wrap" style="margin-top: 8px;"></div>
       </div>
+      </div>
 
-      <div class="panel map-panel" style="margin-top: 14px;">
-        <h3>Search Country Flow Map</h3>
-        <div class="network-map-wrap" id="search-flow-map-wrap"></div>
-        <div class="map-caption" id="search-flow-map-meta">Run a search to render source->destination country flows.</div>
+      <div id="view-config" class="hidden">
+      <div class="panel" style="margin-top: 14px;">
+        <h3>Active Schema Mapping</h3>
+        <div id="schema-view"></div>
       </div>
       </div>
 
@@ -399,6 +442,7 @@
     let auditPage = 1;
     let auditTotalPages = 0;
     const auditPageSize = 50;
+    const mapViewState = {};
 
     function $(id) { return document.getElementById(id); }
 
@@ -495,19 +539,22 @@
       if (view === "ingestor" && !isAdminUser()) {
         view = "main";
       }
-      if (view !== "main" && view !== "search" && view !== "ingestor" && view !== "audit") {
+      if (view !== "main" && view !== "search" && view !== "config" && view !== "ingestor" && view !== "audit") {
         view = "main";
       }
       activeView = view;
       const isAudit = view === "audit" && isAdminUser();
       const isIngestor = view === "ingestor";
       const isSearch = view === "search";
-      $("view-main").classList.toggle("hidden", isAudit || isIngestor || isSearch);
+      const isConfig = view === "config";
+      $("view-main").classList.toggle("hidden", isAudit || isIngestor || isSearch || isConfig);
       $("view-search").classList.toggle("hidden", !isSearch);
+      $("view-config").classList.toggle("hidden", !isConfig);
       $("view-ingestor").classList.toggle("hidden", !isIngestor);
       $("view-audit").classList.toggle("hidden", !isAudit);
       $("menu-main").classList.toggle("active", view === "main");
       $("menu-search").classList.toggle("active", isSearch);
+      $("menu-config").classList.toggle("active", isConfig);
       $("menu-ingestor").classList.toggle("active", isIngestor);
       $("menu-audit").classList.toggle("active", isAudit);
     }
@@ -864,6 +911,111 @@
       return fallback;
     }
 
+    function mapStateFor(hostId) {
+      if (!mapViewState[hostId]) {
+        mapViewState[hostId] = { scale: 1, tx: 0, ty: 0 };
+      }
+      return mapViewState[hostId];
+    }
+
+    function applyMapTransform(hostId) {
+      const host = $(hostId);
+      const zoomLayer = host ? host.querySelector(".zoom-layer") : null;
+      if (!zoomLayer) return;
+      const state = mapStateFor(hostId);
+      zoomLayer.setAttribute(
+        "transform",
+        `translate(${state.tx.toFixed(2)} ${state.ty.toFixed(2)}) scale(${state.scale.toFixed(4)})`
+      );
+    }
+
+    function svgPointFromClient(svg, clientX, clientY) {
+      const point = svg.createSVGPoint();
+      point.x = clientX;
+      point.y = clientY;
+      const ctm = svg.getScreenCTM();
+      if (!ctm) return null;
+      return point.matrixTransform(ctm.inverse());
+    }
+
+    function zoomMap(hostId, factor, focusX = null, focusY = null) {
+      const host = $(hostId);
+      const svg = host ? host.querySelector("svg.flow-map-svg") : null;
+      if (!svg) return;
+      const state = mapStateFor(hostId);
+      const currentScale = state.scale;
+      const newScale = Math.min(10, Math.max(1, currentScale * factor));
+      if (Math.abs(newScale - currentScale) < 0.0001) return;
+
+      const vb = svg.viewBox.baseVal;
+      const fx = focusX == null ? vb.width / 2 : focusX;
+      const fy = focusY == null ? vb.height / 2 : focusY;
+      state.tx = state.tx + fx * (currentScale - newScale);
+      state.ty = state.ty + fy * (currentScale - newScale);
+      state.scale = newScale;
+      applyMapTransform(hostId);
+    }
+
+    function resetMapZoom(hostId) {
+      mapViewState[hostId] = { scale: 1, tx: 0, ty: 0 };
+      applyMapTransform(hostId);
+    }
+
+    function bindMapInteractions(hostId) {
+      const host = $(hostId);
+      const svg = host ? host.querySelector("svg.flow-map-svg") : null;
+      if (!svg) return;
+      const state = mapStateFor(hostId);
+      const vb = svg.viewBox.baseVal;
+      const unitsPerPixelX = vb.width / Math.max(1, svg.clientWidth);
+      const unitsPerPixelY = vb.height / Math.max(1, svg.clientHeight);
+      let dragging = false;
+      let startClientX = 0;
+      let startClientY = 0;
+      let startTx = state.tx;
+      let startTy = state.ty;
+
+      svg.addEventListener("wheel", (ev) => {
+        ev.preventDefault();
+        const pt = svgPointFromClient(svg, ev.clientX, ev.clientY);
+        const factor = ev.deltaY < 0 ? 1.18 : (1 / 1.18);
+        zoomMap(hostId, factor, pt ? pt.x : null, pt ? pt.y : null);
+      }, { passive: false });
+
+      svg.addEventListener("pointerdown", (ev) => {
+        dragging = true;
+        startClientX = ev.clientX;
+        startClientY = ev.clientY;
+        startTx = state.tx;
+        startTy = state.ty;
+        svg.classList.add("is-dragging");
+        try { svg.setPointerCapture(ev.pointerId); } catch (_) {}
+      });
+
+      const endDrag = () => {
+        dragging = false;
+        svg.classList.remove("is-dragging");
+      };
+
+      svg.addEventListener("pointermove", (ev) => {
+        if (!dragging) return;
+        const dx = (ev.clientX - startClientX) * unitsPerPixelX;
+        const dy = (ev.clientY - startClientY) * unitsPerPixelY;
+        state.tx = startTx + dx;
+        state.ty = startTy + dy;
+        applyMapTransform(hostId);
+      });
+      svg.addEventListener("pointerup", endDrag);
+      svg.addEventListener("pointercancel", endDrag);
+      svg.addEventListener("pointerleave", () => {
+        if (!dragging) {
+          svg.classList.remove("is-dragging");
+        }
+      });
+
+      applyMapTransform(hostId);
+    }
+
     async function renderFlowMapPanel(hostId, metaId, pairs, options = {}) {
       const host = $(hostId);
       const meta = $(metaId);
@@ -956,14 +1108,17 @@
             </filter>
           </defs>
           <rect x="0" y="0" width="${width}" height="${height}" fill="#f4f7fb" />
-          ${gridLines}
-          <g>${land}</g>
-          <g filter="url(#${glowId})">${arcPaths.join("")}</g>
-          <g>${nodeCircles.join("")}</g>
+          <g class="zoom-layer">
+            ${gridLines}
+            <g>${land}</g>
+            <g filter="url(#${glowId})">${arcPaths.join("")}</g>
+            <g>${nodeCircles.join("")}</g>
+          </g>
         </svg>
       `;
 
       host.innerHTML = svg;
+      bindMapInteractions(hostId);
       if (mappable.length === 0) {
         const empty = document.createElement("div");
         empty.className = "map-empty";
@@ -984,6 +1139,38 @@
         label: "Source: srcip_country -> dstip_country",
         noDataCaption: "No country-to-country flow data available yet.",
       });
+    }
+
+    function bindMapControlButtons() {
+      const mapControls = [
+        {
+          hostId: "flow-map-wrap",
+          zoomInId: "flow-map-zoom-in",
+          zoomOutId: "flow-map-zoom-out",
+          resetId: "flow-map-zoom-reset",
+        },
+        {
+          hostId: "search-flow-map-wrap",
+          zoomInId: "search-flow-map-zoom-in",
+          zoomOutId: "search-flow-map-zoom-out",
+          resetId: "search-flow-map-zoom-reset",
+        },
+      ];
+
+      for (const cfg of mapControls) {
+        const zoomIn = $(cfg.zoomInId);
+        const zoomOut = $(cfg.zoomOutId);
+        const reset = $(cfg.resetId);
+        if (zoomIn) {
+          zoomIn.addEventListener("click", () => zoomMap(cfg.hostId, 1.2));
+        }
+        if (zoomOut) {
+          zoomOut.addEventListener("click", () => zoomMap(cfg.hostId, 1 / 1.2));
+        }
+        if (reset) {
+          reset.addEventListener("click", () => resetMapZoom(cfg.hostId));
+        }
+      }
     }
 
     function buildTable(columns, rows) {
@@ -1315,6 +1502,7 @@
       const to = new Date(payload.search_time_to || payload.time_to);
       $("time-from").value = toLocalInputValue(from);
       $("time-to").value = toLocalInputValue(to);
+      $("f-ip").value = Array.isArray(payload.source_ips) ? payload.source_ips.join(", ") : "";
       $("f-sip").value = Array.isArray(payload.destination_ips) ? payload.destination_ips.join(", ") : "";
 
       const padSeconds = Number(payload.search_window_pad_seconds || 0);
@@ -1327,6 +1515,9 @@
         `search_window=${payload.search_time_from || payload.time_from} -> ${payload.search_time_to || payload.time_to}`,
         `search_pad=${padMinutes}m`,
         `duration=${Number(payload.duration_seconds || 0).toLocaleString()}s`,
+        `unique_cip=${Number(payload.unique_source_ip_count || 0).toLocaleString()}`,
+        `returned_cip=${Array.isArray(payload.source_ips) ? payload.source_ips.length : 0}`,
+        payload.truncated_source_ips ? "cip_list_truncated=yes" : "cip_list_truncated=no",
         `unique_sip=${Number(payload.unique_destination_ip_count || 0).toLocaleString()}`,
         `returned_sip=${Array.isArray(payload.destination_ips) ? payload.destination_ips.length : 0}`,
         payload.truncated_ips ? "sip_list_truncated=yes" : "sip_list_truncated=no",
@@ -1457,6 +1648,7 @@
       $("auth-mode-label").textContent = modeLabel(AUTH_MODE);
       $("auth-mode-chip").textContent = `Configured authentication: ${modeLabel(AUTH_MODE)}`;
       toggleAuthUi();
+      bindMapControlButtons();
 
       const now = new Date();
       const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
@@ -1480,6 +1672,7 @@
           }
         }
       });
+      $("menu-config").addEventListener("click", () => setView("config"));
       $("menu-ingestor").addEventListener("click", async () => {
         setView("ingestor");
         try {

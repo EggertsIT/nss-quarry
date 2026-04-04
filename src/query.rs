@@ -506,6 +506,21 @@ fn apply_multi_exact_filter(where_clauses: &mut Vec<String>, column: &str, value
     where_clauses.push(format!("({})", predicates.join(" OR ")));
 }
 
+fn apply_contains_or_multi_exact_filter(
+    where_clauses: &mut Vec<String>,
+    column: &str,
+    value: Option<&str>,
+) {
+    let Some(value) = value else {
+        return;
+    };
+    if value.contains(',') {
+        apply_multi_exact_filter(where_clauses, column, Some(value));
+    } else {
+        apply_filter(where_clauses, column, Some(value));
+    }
+}
+
 fn build_search_sql(
     columns: &[String],
     req: &SearchRequest,
@@ -558,7 +573,7 @@ fn build_search_sql(
         &fields.category_field,
         req.filters.category.as_deref(),
     );
-    apply_filter(
+    apply_contains_or_multi_exact_filter(
         &mut where_clauses,
         &fields.source_ip_field,
         req.filters.source_ip.as_deref(),
@@ -673,7 +688,7 @@ fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
     validate_filter_value(filters.action.as_deref(), re, false)?;
     validate_filter_value(filters.threat.as_deref(), re, false)?;
     validate_filter_value(filters.category.as_deref(), re, false)?;
-    validate_filter_value(filters.source_ip.as_deref(), re, false)?;
+    validate_filter_value(filters.source_ip.as_deref(), re, true)?;
     validate_filter_value(filters.server_ip.as_deref(), re, true)?;
     validate_filter_value(filters.device.as_deref(), re, false)?;
     validate_filter_value(filters.department.as_deref(), re, false)?;

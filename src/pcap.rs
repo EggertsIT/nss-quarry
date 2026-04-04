@@ -72,9 +72,17 @@ pub struct PcapAnalysis {
     pub time_to: DateTime<Utc>,
     pub packet_count: u64,
     pub ip_packet_count: u64,
+    pub unique_source_ip_count: usize,
+    pub source_ips: Vec<String>,
+    pub truncated_source_ips: bool,
     pub unique_destination_ip_count: usize,
     pub destination_ips: Vec<String>,
     pub truncated_ips: bool,
+}
+
+struct IpSets {
+    src_ips: HashSet<String>,
+    dst_ips: HashSet<String>,
 }
 
 pub fn analyze_pcap_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
@@ -115,6 +123,7 @@ fn analyze_classic_pcap_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysi
     let mut ip_packet_count = 0u64;
     let mut time_from: Option<DateTime<Utc>> = None;
     let mut time_to: Option<DateTime<Utc>> = None;
+    let mut src_ips = HashSet::new();
     let mut dst_ips = HashSet::new();
     let capped_max_ips = max_ips.clamp(1, 5_000);
 
@@ -146,9 +155,16 @@ fn analyze_classic_pcap_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysi
         let packet = &data[offset..offset + incl_len];
         offset += incl_len;
 
-        if let Some(dst_ip) = extract_dst_ip(header.network, packet) {
+        let src_ip = extract_src_ip(header.network, packet);
+        let dst_ip = extract_dst_ip(header.network, packet);
+        if src_ip.is_some() || dst_ip.is_some() {
             ip_packet_count = ip_packet_count.saturating_add(1);
-            dst_ips.insert(dst_ip);
+            if let Some(src_ip) = src_ip {
+                src_ips.insert(src_ip);
+            }
+            if let Some(dst_ip) = dst_ip {
+                dst_ips.insert(dst_ip);
+            }
         }
     }
 
@@ -158,7 +174,7 @@ fn analyze_classic_pcap_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysi
         time_to,
         packet_count,
         ip_packet_count,
-        dst_ips,
+        IpSets { src_ips, dst_ips },
         capped_max_ips,
     )
 }
@@ -173,6 +189,7 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
     let mut ip_packet_count = 0u64;
     let mut time_from: Option<DateTime<Utc>> = None;
     let mut time_to: Option<DateTime<Utc>> = None;
+    let mut src_ips = HashSet::new();
     let mut dst_ips = HashSet::new();
     let mut used_link_types = HashSet::new();
 
@@ -208,9 +225,16 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
                 {
                     update_time_bounds(ts, &mut time_from, &mut time_to);
                     used_link_types.insert(iface.link_type);
-                    if let Some(dst_ip) = extract_dst_ip(iface.link_type, parsed.packet) {
+                    let src_ip = extract_src_ip(iface.link_type, parsed.packet);
+                    let dst_ip = extract_dst_ip(iface.link_type, parsed.packet);
+                    if src_ip.is_some() || dst_ip.is_some() {
                         ip_packet_count = ip_packet_count.saturating_add(1);
-                        dst_ips.insert(dst_ip);
+                        if let Some(src_ip) = src_ip {
+                            src_ips.insert(src_ip);
+                        }
+                        if let Some(dst_ip) = dst_ip {
+                            dst_ips.insert(dst_ip);
+                        }
                     }
                 }
             }
@@ -223,9 +247,16 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
                 {
                     update_time_bounds(ts, &mut time_from, &mut time_to);
                     used_link_types.insert(iface.link_type);
-                    if let Some(dst_ip) = extract_dst_ip(iface.link_type, parsed.packet) {
+                    let src_ip = extract_src_ip(iface.link_type, parsed.packet);
+                    let dst_ip = extract_dst_ip(iface.link_type, parsed.packet);
+                    if src_ip.is_some() || dst_ip.is_some() {
                         ip_packet_count = ip_packet_count.saturating_add(1);
-                        dst_ips.insert(dst_ip);
+                        if let Some(src_ip) = src_ip {
+                            src_ips.insert(src_ip);
+                        }
+                        if let Some(dst_ip) = dst_ip {
+                            dst_ips.insert(dst_ip);
+                        }
                     }
                 }
             }
@@ -234,9 +265,16 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
                 packet_count = packet_count.saturating_add(1);
                 if let Some(iface) = interfaces.get(&0).copied() {
                     used_link_types.insert(iface.link_type);
-                    if let Some(dst_ip) = extract_dst_ip(iface.link_type, parsed.packet) {
+                    let src_ip = extract_src_ip(iface.link_type, parsed.packet);
+                    let dst_ip = extract_dst_ip(iface.link_type, parsed.packet);
+                    if src_ip.is_some() || dst_ip.is_some() {
                         ip_packet_count = ip_packet_count.saturating_add(1);
-                        dst_ips.insert(dst_ip);
+                        if let Some(src_ip) = src_ip {
+                            src_ips.insert(src_ip);
+                        }
+                        if let Some(dst_ip) = dst_ip {
+                            dst_ips.insert(dst_ip);
+                        }
                     }
                 }
             }
@@ -268,7 +306,7 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
         time_to,
         packet_count,
         ip_packet_count,
-        dst_ips,
+        IpSets { src_ips, dst_ips },
         capped_max_ips,
     )
 }
@@ -279,7 +317,7 @@ fn finalize_analysis(
     time_to: Option<DateTime<Utc>>,
     packet_count: u64,
     ip_packet_count: u64,
-    dst_ips: HashSet<String>,
+    ip_sets: IpSets,
     max_ips: usize,
 ) -> Result<PcapAnalysis> {
     let Some(time_from) = time_from else {
@@ -289,7 +327,15 @@ fn finalize_analysis(
         anyhow::bail!("capture has no timestamped packets");
     };
 
-    let mut destination_ips = dst_ips.into_iter().collect::<Vec<_>>();
+    let mut source_ips = ip_sets.src_ips.into_iter().collect::<Vec<_>>();
+    source_ips.sort_unstable();
+    let unique_source_ip_count = source_ips.len();
+    let truncated_source_ips = source_ips.len() > max_ips;
+    if truncated_source_ips {
+        source_ips.truncate(max_ips);
+    }
+
+    let mut destination_ips = ip_sets.dst_ips.into_iter().collect::<Vec<_>>();
     destination_ips.sort_unstable();
     let unique_destination_ip_count = destination_ips.len();
     let truncated_ips = destination_ips.len() > max_ips;
@@ -303,6 +349,9 @@ fn finalize_analysis(
         time_to,
         packet_count,
         ip_packet_count,
+        unique_source_ip_count,
+        source_ips,
+        truncated_source_ips,
         unique_destination_ip_count,
         destination_ips,
         truncated_ips,
@@ -601,12 +650,29 @@ fn extract_dst_ip(link_type: u32, packet: &[u8]) -> Option<String> {
     }
 }
 
+fn extract_src_ip(link_type: u32, packet: &[u8]) -> Option<String> {
+    match link_type {
+        DLT_EN10MB => extract_src_ip_ethernet(packet),
+        DLT_RAW => extract_src_ip_raw_ip(packet),
+        DLT_LINUX_SLL => extract_src_ip_linux_sll(packet),
+        _ => None,
+    }
+}
+
 fn extract_dst_ip_linux_sll(packet: &[u8]) -> Option<String> {
     if packet.len() < 16 {
         return None;
     }
     let proto = be_u16(&packet[14..16]);
     extract_dst_ip_by_ethertype(proto, &packet[16..])
+}
+
+fn extract_src_ip_linux_sll(packet: &[u8]) -> Option<String> {
+    if packet.len() < 16 {
+        return None;
+    }
+    let proto = be_u16(&packet[14..16]);
+    extract_src_ip_by_ethertype(proto, &packet[16..])
 }
 
 fn extract_dst_ip_ethernet(packet: &[u8]) -> Option<String> {
@@ -627,10 +693,36 @@ fn extract_dst_ip_ethernet(packet: &[u8]) -> Option<String> {
     extract_dst_ip_by_ethertype(ethertype, &packet[offset..])
 }
 
+fn extract_src_ip_ethernet(packet: &[u8]) -> Option<String> {
+    if packet.len() < 14 {
+        return None;
+    }
+    let mut offset = 14usize;
+    let mut ethertype = be_u16(&packet[12..14]);
+
+    while matches!(ethertype, 0x8100 | 0x88a8 | 0x9100) {
+        if packet.len() < offset + 4 {
+            return None;
+        }
+        ethertype = be_u16(&packet[offset + 2..offset + 4]);
+        offset += 4;
+    }
+
+    extract_src_ip_by_ethertype(ethertype, &packet[offset..])
+}
+
 fn extract_dst_ip_by_ethertype(ethertype: u16, payload: &[u8]) -> Option<String> {
     match ethertype {
         0x0800 => extract_ipv4_dst(payload),
         0x86dd => extract_ipv6_dst(payload),
+        _ => None,
+    }
+}
+
+fn extract_src_ip_by_ethertype(ethertype: u16, payload: &[u8]) -> Option<String> {
+    match ethertype {
+        0x0800 => extract_ipv4_src(payload),
+        0x86dd => extract_ipv6_src(payload),
         _ => None,
     }
 }
@@ -644,6 +736,27 @@ fn extract_dst_ip_raw_ip(packet: &[u8]) -> Option<String> {
     }
 }
 
+fn extract_src_ip_raw_ip(packet: &[u8]) -> Option<String> {
+    let version = packet.first().map(|b| b >> 4)?;
+    match version {
+        4 => extract_ipv4_src(packet),
+        6 => extract_ipv6_src(packet),
+        _ => None,
+    }
+}
+
+fn extract_ipv4_src(payload: &[u8]) -> Option<String> {
+    if payload.len() < 20 {
+        return None;
+    }
+    let ihl = ((payload[0] & 0x0f) as usize) * 4;
+    if ihl < 20 || payload.len() < ihl {
+        return None;
+    }
+    let ip = Ipv4Addr::new(payload[12], payload[13], payload[14], payload[15]);
+    Some(ip.to_string())
+}
+
 fn extract_ipv4_dst(payload: &[u8]) -> Option<String> {
     if payload.len() < 20 {
         return None;
@@ -654,6 +767,15 @@ fn extract_ipv4_dst(payload: &[u8]) -> Option<String> {
     }
     let ip = Ipv4Addr::new(payload[16], payload[17], payload[18], payload[19]);
     Some(ip.to_string())
+}
+
+fn extract_ipv6_src(payload: &[u8]) -> Option<String> {
+    if payload.len() < 40 {
+        return None;
+    }
+    let mut src = [0u8; 16];
+    src.copy_from_slice(&payload[8..24]);
+    Some(Ipv6Addr::from(src).to_string())
 }
 
 fn extract_ipv6_dst(payload: &[u8]) -> Option<String> {
@@ -767,6 +889,9 @@ mod tests {
         assert_eq!(summary.link_type, "ethernet");
         assert_eq!(summary.packet_count, 1);
         assert_eq!(summary.ip_packet_count, 1);
+        assert_eq!(summary.unique_source_ip_count, 1);
+        assert_eq!(summary.source_ips, vec!["10.0.0.1".to_string()]);
+        assert!(!summary.truncated_source_ips);
         assert_eq!(summary.unique_destination_ip_count, 1);
         assert_eq!(summary.destination_ips, vec!["1.2.3.4".to_string()]);
         assert!(!summary.truncated_ips);
@@ -779,6 +904,9 @@ mod tests {
         assert_eq!(summary.link_type, "pcapng:ethernet");
         assert_eq!(summary.packet_count, 1);
         assert_eq!(summary.ip_packet_count, 1);
+        assert_eq!(summary.unique_source_ip_count, 1);
+        assert_eq!(summary.source_ips, vec!["10.0.0.1".to_string()]);
+        assert!(!summary.truncated_source_ips);
         assert_eq!(summary.unique_destination_ip_count, 1);
         assert_eq!(summary.destination_ips, vec!["8.8.8.8".to_string()]);
         assert!(!summary.truncated_ips);
