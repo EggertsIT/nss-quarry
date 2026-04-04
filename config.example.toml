@@ -66,6 +66,7 @@ max_days_per_query = 7
 default_limit = 200
 max_rows = 2000
 timeout_ms = 120000
+dashboard_snapshot_refresh_secs = 3600
 default_columns = ["time", "action", "url", "login", "cip", "urlcat", "threatname", "rulelabel"]
 
 [audit]

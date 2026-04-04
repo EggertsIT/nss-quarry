@@ -49,6 +49,9 @@ impl AppConfig {
         if self.query.timeout_ms < 500 {
             anyhow::bail!("query.timeout_ms must be >= 500");
         }
+        if self.query.dashboard_snapshot_refresh_secs == 0 {
+            anyhow::bail!("query.dashboard_snapshot_refresh_secs must be > 0");
+        }
         if self.ingestor.base_url.trim().is_empty() {
             anyhow::bail!("ingestor.base_url cannot be empty");
         }
@@ -408,6 +411,7 @@ pub struct QueryConfig {
     pub default_limit: u32,
     pub max_rows: u32,
     pub timeout_ms: u64,
+    pub dashboard_snapshot_refresh_secs: u64,
     pub default_columns: Vec<String>,
 }
 
@@ -418,6 +422,7 @@ impl Default for QueryConfig {
             default_limit: 200,
             max_rows: 2000,
             timeout_ms: 120_000,
+            dashboard_snapshot_refresh_secs: 3600,
             default_columns: vec![
                 "time".to_string(),
                 "action".to_string(),

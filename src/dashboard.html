@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NSS Quarry Dashboard</title>
+  <link rel="icon" type="image/png" href="/assets/logo.png">
   <style>
     :root {
       --bg: #eef4fb;
@@ -88,6 +89,39 @@
       border-radius: 50%;
       background: radial-gradient(circle, rgba(61, 160, 255, 0.14) 0%, transparent 68%);
       pointer-events: none;
+    }
+    .brand-lockup {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      min-width: 0;
+    }
+    .brand-mark {
+      width: 96px;
+      height: 96px;
+      border-radius: 24px;
+      border: 1px solid rgba(158, 190, 229, 0.95);
+      background:
+        radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.96), rgba(235, 244, 255, 0.88)),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(229, 239, 250, 0.86));
+      padding: 10px;
+      box-shadow:
+        0 20px 38px rgba(18, 47, 89, 0.14),
+        inset 0 1px 0 rgba(255, 255, 255, 0.82);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+    .brand-mark img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+      filter: drop-shadow(0 14px 22px rgba(10, 30, 63, 0.16));
+    }
+    .brand-copy {
+      min-width: 0;
     }
     h1 { margin: 0; font-size: 1.95rem; letter-spacing: -0.02em; color: var(--ink-strong); }
     .sub { color: var(--muted); font-size: 0.96rem; margin-top: 6px; max-width: 760px; line-height: 1.45; }
@@ -425,6 +459,9 @@
         flex-direction: column;
         align-items: flex-start;
       }
+      .brand-lockup {
+        width: 100%;
+      }
     }
     @media (max-width: 720px) {
       .top-tables-grid {
@@ -436,6 +473,16 @@
       }
       .hero {
         padding: 18px 18px;
+      }
+      .brand-lockup {
+        gap: 12px;
+        align-items: flex-start;
+      }
+      .brand-mark {
+        width: 74px;
+        height: 74px;
+        border-radius: 18px;
+        padding: 8px;
       }
       h1 {
         font-size: 1.6rem;
@@ -687,9 +734,14 @@
 <body>
   <div class="wrap">
     <div class="hero hero-shell">
-      <div>
-        <h1>NSS Quarry</h1>
-        <div class="sub">Interactive security operations dashboard for NSS Parquet data</div>
+      <div class="brand-lockup">
+        <div class="brand-mark">
+          <img src="/assets/logo.png" alt="NSS Cloud Quarry logo">
+        </div>
+        <div class="brand-copy">
+          <h1>NSS Quarry</h1>
+          <div class="sub">Interactive security operations dashboard for NSS Parquet data</div>
+        </div>
       </div>
       <div class="toolbar">
         <div class="badge"><span class="dot"></span> API Live</div>
@@ -747,6 +799,7 @@
       <div id="view-main">
       <div id="metric-cards" class="grid cards"></div>
       <div id="main-msg" class="message"></div>
+      <div id="dashboard-meta" class="muted" style="margin-top: 8px;"></div>
 
       <div class="grid two" style="margin-top: 14px;">
         <div class="panel chart-panel">
@@ -1296,9 +1349,57 @@
       }
     }
 
-    async function loadDashboard() {
+    function formatDashboardTimestamp(value) {
+      if (!value) return "n/a";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString([], {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+      }) + " UTC";
+    }
+
+    function renderDashboardMeta(data) {
+      const host = $("dashboard-meta");
+      const parts = [];
+      if (data.source) {
+        parts.push(`Source: ${data.source.replaceAll("_", " ")}`);
+      }
+      if (data.snapshot_generated_at) {
+        parts.push(`Snapshot generated: ${formatDashboardTimestamp(data.snapshot_generated_at)}`);
+      }
+      if (data.data_window_from && data.data_window_to) {
+        parts.push(
+          `Data window: ${formatDashboardTimestamp(data.data_window_from)} to ${formatDashboardTimestamp(data.data_window_to)}`
+        );
+      }
+      if (data.refresh_in_progress) {
+        parts.push("Background refresh in progress");
+      }
+      const notes = Array.isArray(data.notes) ? data.notes.filter(Boolean) : [];
+      host.innerHTML = "";
+      if (parts.length > 0) {
+        const line = document.createElement("div");
+        line.textContent = parts.join(" | ");
+        host.appendChild(line);
+      }
+      for (const note of notes) {
+        const line = document.createElement("div");
+        line.textContent = note;
+        host.appendChild(line);
+      }
+    }
+
+    async function loadDashboard(refreshMode = null) {
       try {
-        const data = await apiFetch("/api/dashboards/overview", { method: "GET" });
+        const suffix = refreshMode === "delta" ? "?refresh=delta" : "";
+        const data = await apiFetch(`/api/dashboards/overview${suffix}`, { method: "GET" });
         const cardsHost = $("metric-cards");
         cardsHost.innerHTML = "";
         for (const card of data.cards || []) {
@@ -1311,8 +1412,10 @@
         renderChartFromTable(data.tables?.[0], "chart-a", "chart-title-a");
         renderChartFromTable(data.tables?.[1], "chart-b", "chart-title-b");
         await renderCountryFlowMap(data.tables || []);
+        renderDashboardMeta(data);
         setMessage("main-msg", "", true);
       } catch (err) {
+        $("dashboard-meta").textContent = "";
         setMessage("main-msg", err.message || "Failed to load dashboard.");
         throw err;
       }
@@ -2732,9 +2835,9 @@
       }
     }
 
-    async function refreshAll() {
+    async function refreshAll(dashboardRefreshMode = null) {
       await loadSchema();
-      const tasks = [loadDashboard()];
+      const tasks = [loadDashboard(dashboardRefreshMode)];
       if (activeView === "search") {
         tasks.push(runSearch());
       }
@@ -2791,7 +2894,7 @@
       $("oidc-login").addEventListener("click", () => { window.location.href = "/auth/login"; });
       $("logout").addEventListener("click", onLogout);
       $("refresh-all").addEventListener("click", async () => {
-        try { await refreshAll(); } catch (err) { setMessage("search-msg", err.message || "Refresh failed"); }
+        try { await refreshAll("delta"); } catch (err) { setMessage("search-msg", err.message || "Refresh failed"); }
       });
       $("menu-main").addEventListener("click", () => setView("main"));
       $("menu-search").addEventListener("click", async () => {

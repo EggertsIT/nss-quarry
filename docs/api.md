@@ -542,18 +542,29 @@ pretty(response.json())
 
 ### `GET /api/dashboards/{name}`
 
-Returns 24-hour aggregate cards and tables.
+Returns dashboard cards and tables from the persisted hourly overview snapshot.
 
 Use `overview` as the dashboard name.
 
 Current implementation note:
 - the backend currently returns the same 24h overview payload regardless of `{name}`
 - clients should still use `overview` for forward compatibility
+- the default response is snapshot-backed and avoids a live full 24-hour parquet scan on every request
+- use `refresh=delta` to merge newer finalized parquet data on top of the latest hourly snapshot
 
 Python:
 
 ```python
 response = require_ok(session.get(f"{BASE_URL}/api/dashboards/overview"))
+pretty(response.json())
+```
+
+Manual delta refresh:
+
+```python
+response = require_ok(
+    session.get(f"{BASE_URL}/api/dashboards/overview", params={"refresh": "delta"})
+)
 pretty(response.json())
 ```
 
@@ -569,6 +580,13 @@ Response includes:
   - `top_source_ips`
   - `top_departments`
   - `country_flows_24h`
+- freshness metadata:
+  - `source`
+  - `snapshot_generated_at`
+  - `data_window_from`
+  - `data_window_to`
+  - `refresh_in_progress`
+  - `notes`
 
 ### `GET /api/schema`
 

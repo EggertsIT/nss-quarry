@@ -80,6 +80,12 @@ pub struct PcapAnalyzeResponse {
 pub struct DashboardResponse {
     pub name: String,
     pub generated_at: DateTime<Utc>,
+    pub source: String,
+    pub snapshot_generated_at: Option<DateTime<Utc>>,
+    pub data_window_from: Option<DateTime<Utc>>,
+    pub data_window_to: Option<DateTime<Utc>>,
+    pub refresh_in_progress: bool,
+    pub notes: Vec<String>,
     pub cards: Vec<MetricCard>,
     pub tables: Vec<TableBlock>,
 }

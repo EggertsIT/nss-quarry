@@ -37,7 +37,7 @@ use crate::models::{
     PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
 use crate::pcap::analyze_pcap_file;
-use crate::query::{QueryService, VisibilityFilters};
+use crate::query::{DashboardRefreshMode, QueryService, VisibilityFilters};
 use crate::webui::render_dashboard_html;
 
 #[cfg(unix)]
@@ -86,6 +86,11 @@ struct AppState {
 struct OidcCallbackQuery {
     code: String,
     state: String,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct DashboardQueryParams {
+    refresh: Option<String>,
 }
 
 #[tokio::main]
@@ -181,6 +186,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         "loaded visibility filters"
     );
     info!(api_tokens = api_tokens.len(), "loaded api tokens");
+    state.query.start_dashboard_maintenance();
 
     let app = build_router(state);
 
@@ -202,6 +208,7 @@ fn build_router(state: AppState) -> Router {
         .route("/readyz", get(readyz))
         .route("/dashboard", get(dashboard_page))
         .route("/assets/world.geojson", get(world_geojson))
+        .route("/assets/logo.png", get(logo_png))
         .route("/auth/login", get(auth_login_oidc).post(auth_login_local))
         .route("/auth/callback", get(auth_callback_oidc))
         .route("/auth/logout", post(auth_logout))
@@ -275,6 +282,17 @@ async fn world_geojson() -> Response {
     res.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/geo+json; charset=utf-8"),
+    );
+    res
+}
+
+async fn logo_png() -> Response {
+    let mut res = Response::new(include_bytes!("assets/nss-quarry-logo.png").to_vec().into());
+    res.headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("public, max-age=86400"),
     );
     res
 }
@@ -733,6 +751,7 @@ async fn api_dashboard(
     headers: HeaderMap,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(name): Path<String>,
+    Query(params): Query<DashboardQueryParams>,
 ) -> Result<Json<crate::models::DashboardResponse>, AppError> {
     let source_ip = extract_source_ip(&headers, Some(peer));
     let user = require_user(
@@ -743,9 +762,13 @@ async fn api_dashboard(
         RoleName::Helpdesk,
     )
     .await?;
+    let refresh_mode = match params.refresh.as_deref() {
+        Some("delta") => DashboardRefreshMode::Delta,
+        _ => DashboardRefreshMode::Normal,
+    };
     let data = state
         .query
-        .dashboard(&name, user.role)
+        .dashboard(&name, user.role, refresh_mode)
         .await
         .map_err(AppError::bad_request)?;
     state
@@ -759,7 +782,14 @@ async fn api_dashboard(
             metadata: serde_json::json!({
                 "auth_mode": user.auth_mode,
                 "source_ip": source_ip,
-                "name": name
+                "name": name,
+                "refresh_mode": match refresh_mode {
+                    DashboardRefreshMode::Normal => "normal",
+                    DashboardRefreshMode::Delta => "delta",
+                },
+                "dashboard_source": data.source,
+                "snapshot_generated_at": data.snapshot_generated_at,
+                "data_window_to": data.data_window_to
             }),
         })
         .await;

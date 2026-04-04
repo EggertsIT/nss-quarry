@@ -192,7 +192,7 @@ Full API reference with Python examples:
 - `POST /api/search`
 - `POST /api/export/csv`
 - `POST /api/pcap/analyze` (multipart upload: `pcap` file + optional `max_ips`)
-- `GET /api/dashboards/{name}`
+- `GET /api/dashboards/{name}` (`?refresh=delta` supported for manual current-window refresh)
 - `GET /api/audit` (admin only, server-side pagination and filtering)
 - `GET /api/audit/export/csv` (admin only, filter-aware export; capped to 50k rows)
 - `GET /api/admin/api-tokens` (admin only; lists managed API tokens)
@@ -206,6 +206,12 @@ API authentication:
 - session cookie for browser and interactive login
 - `Authorization: Bearer <token>` or `X-API-Token: <token>` for automation API clients
 - API tokens can be source-restricted by IP or CIDR and disabled at runtime
+
+Dashboard behavior:
+- the main dashboard is served from a persisted hourly snapshot, not a live full 24-hour parquet scan on every page load
+- `query.dashboard_snapshot_refresh_secs` controls the hourly rebuild cadence
+- the browser `Refresh` button requests `?refresh=delta`, which merges newer finalized parquet data on top of the latest hourly snapshot when available
+- dashboard responses include freshness metadata such as `source`, `snapshot_generated_at`, `data_window_from`, `data_window_to`, `refresh_in_progress`, and `notes`
 
 `/api/audit` query parameters:
 - `page` (default `1`)
