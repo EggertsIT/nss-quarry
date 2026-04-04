@@ -626,6 +626,20 @@ async fn api_schema(
             mapped_from: state.cfg.data.fields.department_field.clone(),
         },
     ];
+    let mut fields = fields;
+    if let Some(source_country_field) = state.cfg.data.fields.source_country_field.clone() {
+        fields.push(SchemaFieldInfo {
+            name: "source_country_field".to_string(),
+            mapped_from: source_country_field,
+        });
+    }
+    if let Some(destination_country_field) = state.cfg.data.fields.destination_country_field.clone()
+    {
+        fields.push(SchemaFieldInfo {
+            name: "destination_country_field".to_string(),
+            mapped_from: destination_country_field,
+        });
+    }
     let parquet_root = state.cfg.data.parquet_root.clone();
     let (parquet_columns, parquet_schema_error) =
         tokio::task::spawn_blocking(move || detect_parquet_columns(&parquet_root))

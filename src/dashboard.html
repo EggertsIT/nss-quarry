@@ -121,6 +121,30 @@
       gap: 6px;
       min-height: 220px;
     }
+    .map-panel {
+      min-height: 400px;
+    }
+    .network-map-wrap {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(251, 253, 255, 0.98), rgba(243, 248, 254, 0.9));
+      overflow: hidden;
+    }
+    #flow-map {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    .map-caption {
+      margin-top: 8px;
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .map-empty {
+      color: var(--muted);
+      font-size: 0.9rem;
+      padding: 10px;
+    }
     .bar-row {
       display: grid;
       grid-template-columns: minmax(120px, 1fr) 5fr auto;
@@ -229,6 +253,12 @@
           <h3 id="chart-title-b">Top Chart B</h3>
           <div id="chart-b" class="chart"></div>
         </div>
+      </div>
+
+      <div class="panel map-panel" style="margin-top: 14px;">
+        <h3>Global Country Flow Map (24h)</h3>
+        <div class="network-map-wrap" id="flow-map-wrap"></div>
+        <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
       </div>
 
       <div class="panel" style="margin-top: 14px;">
@@ -550,6 +580,7 @@
       renderTopTables(data.tables || []);
       renderChartFromTable(data.tables?.[0], "chart-a", "chart-title-a");
       renderChartFromTable(data.tables?.[1], "chart-b", "chart-title-b");
+      renderCountryFlowMap(data.tables || []);
     }
 
     function renderChartFromTable(table, chartId, titleId) {
@@ -586,7 +617,7 @@
         host.innerHTML = "<div class='muted'>No aggregate tables returned.</div>";
         return;
       }
-      for (const table of tables) {
+      for (const table of tables.filter(t => t && t.name !== "country_flows_24h")) {
         const block = document.createElement("div");
         block.className = "panel";
         block.style.marginBottom = "10px";
@@ -596,6 +627,244 @@
         wrap.appendChild(buildTable(table.columns || [], table.rows || []));
         block.appendChild(wrap);
         host.appendChild(block);
+      }
+    }
+
+    const COUNTRY_CENTROIDS = {
+      "afghanistan": [33.9, 67.7],
+      "algeria": [28.0, 1.6],
+      "argentina": [-38.4, -63.6],
+      "australia": [-25.3, 133.8],
+      "austria": [47.6, 14.5],
+      "bahrain": [26.1, 50.6],
+      "bangladesh": [23.7, 90.4],
+      "belgium": [50.5, 4.5],
+      "brazil": [-14.2, -51.9],
+      "ca": [56.1, -106.3],
+      "canada": [56.1, -106.3],
+      "chile": [-35.7, -71.5],
+      "china": [35.9, 104.2],
+      "cn": [35.9, 104.2],
+      "co": [4.6, -74.1],
+      "colombia": [4.6, -74.1],
+      "czech republic": [49.8, 15.5],
+      "czechia": [49.8, 15.5],
+      "de": [51.2, 10.4],
+      "denmark": [56.3, 9.5],
+      "eg": [26.8, 30.8],
+      "egypt": [26.8, 30.8],
+      "es": [40.5, -3.7],
+      "finland": [61.9, 25.7],
+      "fr": [46.2, 2.2],
+      "france": [46.2, 2.2],
+      "germany": [51.2, 10.4],
+      "greece": [39.1, 21.8],
+      "hong kong": [22.3, 114.2],
+      "hu": [47.2, 19.5],
+      "hungary": [47.2, 19.5],
+      "id": [-0.8, 113.9],
+      "india": [20.6, 78.9],
+      "indonesia": [-0.8, 113.9],
+      "ie": [53.1, -8.2],
+      "in": [20.6, 78.9],
+      "iran": [32.4, 53.7],
+      "iraq": [33.2, 43.7],
+      "ireland": [53.1, -8.2],
+      "israel": [31.0, 35.0],
+      "it": [41.9, 12.6],
+      "italy": [41.9, 12.6],
+      "japan": [36.2, 138.3],
+      "jp": [36.2, 138.3],
+      "kenya": [-0.0, 37.9],
+      "korea republic of": [36.5, 127.9],
+      "kr": [36.5, 127.9],
+      "kw": [29.3, 47.5],
+      "kuwait": [29.3, 47.5],
+      "ma": [31.8, -7.1],
+      "malaysia": [4.2, 102.0],
+      "mx": [23.6, -102.5],
+      "mexico": [23.6, -102.5],
+      "morocco": [31.8, -7.1],
+      "netherlands": [52.1, 5.3],
+      "new zealand": [-40.9, 174.9],
+      "ng": [9.1, 8.7],
+      "nigeria": [9.1, 8.7],
+      "no": [60.5, 8.5],
+      "norway": [60.5, 8.5],
+      "nz": [-40.9, 174.9],
+      "oman": [21.5, 55.9],
+      "pakistan": [30.4, 69.4],
+      "pe": [-9.2, -75.0],
+      "peru": [-9.2, -75.0],
+      "philippines": [12.9, 122.8],
+      "pl": [52.0, 19.1],
+      "poland": [52.0, 19.1],
+      "portugal": [39.4, -8.2],
+      "pt": [39.4, -8.2],
+      "qatar": [25.3, 51.2],
+      "romania": [45.9, 24.9],
+      "ro": [45.9, 24.9],
+      "russia": [61.5, 105.3],
+      "ru": [61.5, 105.3],
+      "sa": [24.7, 46.7],
+      "saudi arabia": [24.7, 46.7],
+      "se": [60.1, 18.6],
+      "serbia": [44.0, 20.8],
+      "sg": [1.4, 103.8],
+      "singapore": [1.4, 103.8],
+      "south africa": [-30.6, 22.9],
+      "south korea": [36.5, 127.9],
+      "spain": [40.5, -3.7],
+      "sri lanka": [7.9, 80.8],
+      "sweden": [60.1, 18.6],
+      "switzerland": [46.8, 8.2],
+      "taiwan": [23.7, 121.0],
+      "thailand": [15.9, 100.9],
+      "tn": [34.0, 9.5],
+      "tr": [38.9, 35.2],
+      "tunisia": [34.0, 9.5],
+      "turkey": [38.9, 35.2],
+      "ua": [49.0, 31.2],
+      "uae": [24.3, 54.4],
+      "uk": [55.4, -3.4],
+      "united arab emirates": [24.3, 54.4],
+      "united kingdom": [55.4, -3.4],
+      "united states": [37.1, -95.7],
+      "united states of america": [37.1, -95.7],
+      "us": [37.1, -95.7],
+      "usa": [37.1, -95.7],
+      "vietnam": [14.1, 108.3],
+      "za": [-30.6, 22.9],
+    };
+
+    const WORLD_LAND_PATHS = [
+      "M85,128 L125,78 L203,58 L264,83 L287,123 L258,156 L225,185 L206,228 L169,244 L142,223 L119,184 L90,167 Z",
+      "M244,238 L270,256 L286,302 L281,349 L262,393 L235,417 L216,396 L223,353 L231,318 L224,280 Z",
+      "M302,74 L334,60 L352,71 L343,94 L315,97 Z",
+      "M414,124 L442,108 L474,111 L495,128 L520,131 L547,144 L584,144 L610,154 L643,170 L686,162 L719,173 L756,171 L792,184 L831,205 L856,228 L844,248 L812,247 L789,229 L752,221 L720,230 L682,224 L646,231 L617,246 L579,240 L548,224 L523,202 L497,191 L474,198 L453,186 L434,170 Z",
+      "M505,199 L535,210 L559,236 L568,267 L555,312 L530,348 L495,360 L474,336 L479,300 L490,270 L497,232 Z",
+      "M798,298 L826,288 L855,301 L877,322 L866,346 L833,355 L803,339 L789,316 Z",
+      "M882,365 L902,359 L914,372 L905,385 L887,383 Z",
+    ];
+
+    function normalizeCountryName(value) {
+      if (!value) return "";
+      return String(value)
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function projectEquirectangular(lat, lon, width, height) {
+      const x = ((lon + 180) / 360) * width;
+      const y = ((90 - lat) / 180) * height;
+      return { x, y };
+    }
+
+    function resolveCountryLatLon(country) {
+      const key = normalizeCountryName(country);
+      return COUNTRY_CENTROIDS[key] || null;
+    }
+
+    function renderCountryFlowMap(tables) {
+      const host = $("flow-map-wrap");
+      const meta = $("flow-map-meta");
+      host.innerHTML = "";
+
+      const table = (tables || []).find(t => t && t.name === "country_flows_24h");
+      const rows = Array.isArray(table?.rows) ? table.rows : [];
+      const width = 1000;
+      const height = 460;
+
+      const parsed = rows.map((row) => {
+        const source = row?.[0] || "";
+        const destination = row?.[1] || "";
+        const count = Number.parseInt(row?.[2], 10) || 0;
+        const srcLatLon = resolveCountryLatLon(source);
+        const dstLatLon = resolveCountryLatLon(destination);
+        return { source, destination, count, srcLatLon, dstLatLon };
+      });
+      const mappable = parsed.filter(f => f.count > 0 && f.srcLatLon && f.dstLatLon).slice(0, 220);
+
+      const totalCount = parsed.reduce((sum, f) => sum + (f.count || 0), 0);
+      if (mappable.length === 0) {
+        meta.textContent = "Source: srcip_country -> dstip_country | no mappable country flow data in the last 24h.";
+      } else {
+        meta.textContent = `Source: srcip_country -> dstip_country | rendered routes: ${mappable.length.toLocaleString()} | total flow events: ${totalCount.toLocaleString()}`;
+      }
+
+      const maxCount = Math.max(1, ...mappable.map(f => f.count));
+      const nodeWeights = new Map();
+      const arcPaths = [];
+
+      for (const flow of mappable) {
+        const [srcLat, srcLon] = flow.srcLatLon;
+        const [dstLat, dstLon] = flow.dstLatLon;
+        const src = projectEquirectangular(srcLat, srcLon, width, height);
+        const dst = projectEquirectangular(dstLat, dstLon, width, height);
+
+        const dx = dst.x - src.x;
+        const dy = dst.y - src.y;
+        const dist = Math.hypot(dx, dy);
+        const curvature = Math.min(160, dist * 0.36) + 14;
+        const cx = (src.x + dst.x) / 2;
+        const cy = Math.min(src.y, dst.y) - curvature;
+        const norm = Math.sqrt(flow.count / maxCount);
+        const widthPx = (0.7 + norm * 2.5).toFixed(2);
+        const opacity = (0.18 + norm * 0.78).toFixed(3);
+        arcPaths.push(
+          `<path d="M${src.x.toFixed(1)} ${src.y.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${dst.x.toFixed(1)} ${dst.y.toFixed(1)}" stroke="#ff2ea6" stroke-opacity="${opacity}" stroke-width="${widthPx}" fill="none" stroke-linecap="round" />`
+        );
+
+        const srcKey = `${src.x.toFixed(1)},${src.y.toFixed(1)}`;
+        const dstKey = `${dst.x.toFixed(1)},${dst.y.toFixed(1)}`;
+        nodeWeights.set(srcKey, (nodeWeights.get(srcKey) || 0) + flow.count);
+        nodeWeights.set(dstKey, (nodeWeights.get(dstKey) || 0) + flow.count);
+      }
+
+      const maxNode = Math.max(1, ...nodeWeights.values());
+      const nodeCircles = [];
+      for (const [key, weight] of nodeWeights.entries()) {
+        const [x, y] = key.split(",").map(Number);
+        const norm = Math.sqrt(weight / maxNode);
+        const radius = (1.3 + norm * 3.6).toFixed(2);
+        nodeCircles.push(`<circle cx="${x}" cy="${y}" r="${radius}" fill="#ff4db4" fill-opacity="0.82" />`);
+      }
+
+      const land = WORLD_LAND_PATHS
+        .map(p => `<path d="${p}" fill="#d6dce4" stroke="#c4ccd7" stroke-width="1.1" />`)
+        .join("");
+
+      const gridLines = [
+        90, 180, 270, 360,
+      ].map(v => `<line x1="0" y1="${v}" x2="${width}" y2="${v}" stroke="#d8e0eb" stroke-width="0.8" stroke-opacity="0.45" />`).join("");
+
+      const svg = `
+        <svg id="flow-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Global country flow map">
+          <defs>
+            <filter id="flowGlow">
+              <feGaussianBlur stdDeviation="1.9" result="blur"/>
+              <feMerge>
+                <feMergeNode in="blur"></feMergeNode>
+                <feMergeNode in="SourceGraphic"></feMergeNode>
+              </feMerge>
+            </filter>
+          </defs>
+          <rect x="0" y="0" width="${width}" height="${height}" fill="#f4f7fb" />
+          ${gridLines}
+          <g>${land}</g>
+          <g filter="url(#flowGlow)">${arcPaths.join("")}</g>
+          <g>${nodeCircles.join("")}</g>
+        </svg>
+      `;
+
+      host.innerHTML = svg;
+      if (mappable.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "map-empty";
+        empty.textContent = "No country-to-country flow data available yet.";
+        host.appendChild(empty);
       }
     }
 

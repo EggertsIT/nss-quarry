@@ -160,6 +160,13 @@ impl QueryService {
         let device_col = ident(&self.inner.fields.device_field);
         let ip_col = ident(&self.inner.fields.source_ip_field);
         let dept_col = ident(&self.inner.fields.department_field);
+        let src_country_col = self.inner.fields.source_country_field.as_deref().map(ident);
+        let dst_country_col = self
+            .inner
+            .fields
+            .destination_country_field
+            .as_deref()
+            .map(ident);
         let Some(parquet_src) =
             parquet_source_sql_for_range(&self.inner.parquet_root, from_24h, now)?
         else {
@@ -186,6 +193,7 @@ impl QueryService {
                     empty_top_table("top_devices"),
                     empty_top_table("top_source_ips"),
                     empty_top_table("top_departments"),
+                    empty_country_flow_table("country_flows_24h"),
                 ],
             });
         };
@@ -276,6 +284,25 @@ impl QueryService {
             )?,
         ];
 
+        let country_flows = match (src_country_col.as_deref(), dst_country_col.as_deref()) {
+            (Some(src_col), Some(dst_col)) => top_country_flows(
+                &conn,
+                CountryFlowArgs {
+                    name: "country_flows_24h",
+                    src_country_col: src_col,
+                    dst_country_col: dst_col,
+                    time_col: &time_col,
+                    from_ts: &from_ts,
+                    to_ts: &to_ts,
+                    parquet_src: parquet_src.as_str(),
+                    limit: 240,
+                },
+            )
+            .unwrap_or_else(|_| empty_country_flow_table("country_flows_24h")),
+            _ => empty_country_flow_table("country_flows_24h"),
+        };
+        tables.push(country_flows);
+
         if role == RoleName::Helpdesk {
             for block in &mut tables {
                 if block.name == "top_users"
@@ -323,6 +350,17 @@ struct TopNArgs<'a> {
     limit: u32,
 }
 
+struct CountryFlowArgs<'a> {
+    name: &'a str,
+    src_country_col: &'a str,
+    dst_country_col: &'a str,
+    time_col: &'a str,
+    from_ts: &'a str,
+    to_ts: &'a str,
+    parquet_src: &'a str,
+    limit: u32,
+}
+
 fn top_n(conn: &Connection, args: TopNArgs<'_>) -> Result<TableBlock> {
     let sql = format!(
         "SELECT COALESCE(CAST({field_col} AS VARCHAR), 'None') AS value, COUNT(*) AS cnt \
@@ -354,10 +392,67 @@ fn top_n(conn: &Connection, args: TopNArgs<'_>) -> Result<TableBlock> {
     })
 }
 
+fn top_country_flows(conn: &Connection, args: CountryFlowArgs<'_>) -> Result<TableBlock> {
+    let sql = format!(
+        "SELECT \
+            CAST({src_country_col} AS VARCHAR) AS source_country, \
+            CAST({dst_country_col} AS VARCHAR) AS destination_country, \
+            COUNT(*) AS cnt \
+         FROM {parquet_src} \
+         WHERE CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from_ts}' AND TIMESTAMP '{to_ts}' \
+           AND COALESCE(CAST({src_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
+           AND COALESCE(CAST({dst_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
+         GROUP BY 1, 2 \
+         ORDER BY 3 DESC \
+         LIMIT {limit}",
+        src_country_col = args.src_country_col,
+        dst_country_col = args.dst_country_col,
+        parquet_src = args.parquet_src,
+        time_col = args.time_col,
+        from_ts = args.from_ts,
+        to_ts = args.to_ts,
+        limit = args.limit
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query([])?;
+    let mut out = Vec::new();
+    while let Some(row) = rows.next()? {
+        let src: Option<String> = row.get(0)?;
+        let dst: Option<String> = row.get(1)?;
+        let count: i64 = row.get(2)?;
+        out.push(vec![
+            src.unwrap_or_else(|| "None".to_string()),
+            dst.unwrap_or_else(|| "None".to_string()),
+            count.to_string(),
+        ]);
+    }
+    Ok(TableBlock {
+        name: args.name.to_string(),
+        columns: vec![
+            "source_country".to_string(),
+            "destination_country".to_string(),
+            "count".to_string(),
+        ],
+        rows: out,
+    })
+}
+
 fn empty_top_table(name: &str) -> TableBlock {
     TableBlock {
         name: name.to_string(),
         columns: vec!["value".to_string(), "count".to_string()],
+        rows: Vec::new(),
+    }
+}
+
+fn empty_country_flow_table(name: &str) -> TableBlock {
+    TableBlock {
+        name: name.to_string(),
+        columns: vec![
+            "source_country".to_string(),
+            "destination_country".to_string(),
+            "count".to_string(),
+        ],
         rows: Vec::new(),
     }
 }

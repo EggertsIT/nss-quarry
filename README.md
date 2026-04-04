@@ -15,6 +15,7 @@ Production/commercial use requires a paid monthly commercial subscription from t
 
 - Query last 14-day parquet partitions with strict guardrails (max 7-day query window by default).
 - Troubleshooting dashboards and filtered search APIs.
+- Global country flow map (24h) using `srcip_country -> dstip_country`.
 - Embedded `NSS Ingestor` dashboard tab (admin-only, via `/ingestor/*` reverse-proxy).
 - Admin-only `Force Finalize Open Parquet Files` control (audited, source-IP logged).
 - CSV export with audit trail.
@@ -112,6 +113,7 @@ cp config.example.toml config.toml
 2. Set at least:
 - `data.parquet_root` to your `nss-to-parquet` output directory.
 - field mapping in `data.fields` (fresh-install defaults are aligned to `nss-to-parquet` `zscaler_web_v2_ops`, including `user_field="login"` and `url_field="url"`).
+  - include `source_country_field` / `destination_country_field` for global flow map rendering (defaults: `srcip_country`, `dstip_country`).
 - `auth.mode`
 - auth settings for the chosen mode.
 - ingestor control settings:

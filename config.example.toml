@@ -19,6 +19,8 @@ source_ip_field = "cip"
 server_ip_field = "sip"
 device_field = "devicehostname"
 department_field = "dept"
+source_country_field = "srcip_country"
+destination_country_field = "dstip_country"
 
 [auth]
 mode = "local_users" # local_users | oidc_entra | oidc_okta

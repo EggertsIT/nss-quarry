@@ -73,6 +73,12 @@ impl AppConfig {
         validate_identifier(&self.data.fields.server_ip_field)?;
         validate_identifier(&self.data.fields.device_field)?;
         validate_identifier(&self.data.fields.department_field)?;
+        if let Some(name) = self.data.fields.source_country_field.as_deref() {
+            validate_identifier(name)?;
+        }
+        if let Some(name) = self.data.fields.destination_country_field.as_deref() {
+            validate_identifier(name)?;
+        }
         for col in &self.query.default_columns {
             validate_identifier(col)?;
         }
@@ -187,6 +193,8 @@ pub struct FieldMap {
     pub server_ip_field: String,
     pub device_field: String,
     pub department_field: String,
+    pub source_country_field: Option<String>,
+    pub destination_country_field: Option<String>,
 }
 
 impl Default for FieldMap {
@@ -202,6 +210,8 @@ impl Default for FieldMap {
             server_ip_field: "sip".to_string(),
             device_field: "devicehostname".to_string(),
             department_field: "dept".to_string(),
+            source_country_field: Some("srcip_country".to_string()),
+            destination_country_field: Some("dstip_country".to_string()),
         }
     }
 }
