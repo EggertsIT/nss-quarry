@@ -17,6 +17,8 @@ use crate::models::{
 const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
 const MIN_DASHBOARD_TIMEOUT_MS: u64 = 120_000;
 const DASHBOARD_CACHE_TTL_SECS: i64 = 60;
+const DUCKDB_MEMORY_LIMIT: &str = "512MB";
+const DUCKDB_THREADS: u32 = 2;
 
 #[derive(Clone)]
 pub struct QueryService {
@@ -193,7 +195,7 @@ impl QueryService {
             .map_err(|_| anyhow::anyhow!("visibility filters lock poisoned"))?
             .clone();
         let batch_limit = search_batch_limit(limit, self.inner.max_rows);
-        let conn = Connection::open_in_memory()?;
+        let conn = open_query_connection()?;
         let mut out = Vec::new();
 
         'hours: for files in groups.into_iter().rev() {
@@ -286,7 +288,7 @@ impl QueryService {
             });
         };
 
-        let conn = Connection::open_in_memory()?;
+        let conn = open_query_connection()?;
         let from_ts = from_24h.format("%Y-%m-%d %H:%M:%S").to_string();
         let to_ts = now.format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -772,6 +774,22 @@ fn execute_search_sql(
 
 fn search_batch_limit(limit: u32, max_rows: u32) -> u32 {
     max_rows.max(limit).clamp(500, 5_000)
+}
+
+fn open_query_connection() -> Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    let temp_dir = std::env::temp_dir().join("nss-quarry-duckdb");
+    std::fs::create_dir_all(&temp_dir)
+        .with_context(|| format!("failed creating DuckDB temp dir {}", temp_dir.display()))?;
+    conn.execute_batch(&format!(
+        "SET memory_limit = '{memory_limit}'; \
+         SET threads = {threads}; \
+         SET temp_directory = '{temp_dir}';",
+        memory_limit = DUCKDB_MEMORY_LIMIT,
+        threads = DUCKDB_THREADS,
+        temp_dir = escape_sql_literal(&temp_dir.display().to_string()),
+    ))?;
+    Ok(conn)
 }
 
 fn escape_sql_literal(value: &str) -> String {
