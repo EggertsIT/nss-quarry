@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::RwLock as StdRwLock;
 
 use anyhow::{Context, Result};
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
@@ -8,6 +9,7 @@ use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
+use ipnet::IpNet;
 use openidconnect::core::{CoreAuthenticationFlow, CoreClient, CoreProviderMetadata};
 use openidconnect::reqwest;
 use openidconnect::{
@@ -18,16 +20,31 @@ use tokio::sync::RwLock;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::config::{ApiTokenConfig, AuthConfig, AuthMode, LocalUser, OidcRoleMap, RoleName};
+use crate::config::{
+    ApiTokenConfig, AuthConfig, AuthMode, LocalUser, OidcRoleMap, RoleName, parse_allowed_source,
+};
 use crate::models::{AuthResponse, AuthUser, LocalLoginRequest};
 
 #[derive(Clone)]
 pub struct AuthManager {
     cfg: AuthConfig,
-    api_tokens: Arc<Vec<ApiTokenConfig>>,
+    api_tokens: Arc<StdRwLock<Vec<CompiledApiToken>>>,
     local_users: Arc<HashMap<String, LocalUser>>,
     sessions: Arc<RwLock<HashMap<String, StoredSession>>>,
     oidc: Option<OidcRuntime>,
+}
+
+#[derive(Debug, Clone)]
+struct CompiledApiToken {
+    raw: ApiTokenConfig,
+    allowed_sources: Vec<IpNet>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApiTokenAuthError {
+    InvalidToken,
+    SourceIpRequired,
+    SourceNotAllowed,
 }
 
 #[derive(Clone)]
@@ -63,7 +80,7 @@ struct StoredSession {
 
 impl AuthManager {
     pub async fn new(cfg: &AuthConfig) -> Result<Self> {
-        let api_tokens = cfg.api_tokens.tokens.clone();
+        let api_tokens = compile_api_tokens(&cfg.api_tokens.tokens)?;
         let local_users = cfg
             .local_users
             .users
@@ -109,7 +126,7 @@ impl AuthManager {
 
         Ok(Self {
             cfg: cfg.clone(),
-            api_tokens: Arc::new(api_tokens),
+            api_tokens: Arc::new(StdRwLock::new(api_tokens)),
             local_users: Arc::new(local_users),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             oidc,
@@ -258,9 +275,15 @@ impl AuthManager {
         Some(session.user)
     }
 
-    pub fn resolve_user_from_api_token_header(&self, headers: &HeaderMap) -> Option<AuthUser> {
-        let token = extract_api_token(headers)?;
-        self.resolve_user_from_api_token(token)
+    pub fn resolve_user_from_api_token_header(
+        &self,
+        headers: &HeaderMap,
+        source_ip: Option<&str>,
+    ) -> Result<Option<AuthUser>, ApiTokenAuthError> {
+        let Some(token) = extract_api_token(headers) else {
+            return Ok(None);
+        };
+        self.resolve_user_from_api_token(token, source_ip).map(Some)
     }
 
     pub async fn invalidate_cookie_session(&self, jar: &CookieJar) {
@@ -269,17 +292,43 @@ impl AuthManager {
         }
     }
 
-    fn resolve_user_from_api_token(&self, token: &str) -> Option<AuthUser> {
+    pub fn set_api_tokens(&self, tokens: Vec<ApiTokenConfig>) -> Result<()> {
+        let compiled = compile_api_tokens(&tokens)?;
+        let mut guard = self
+            .api_tokens
+            .write()
+            .map_err(|_| anyhow::anyhow!("api tokens lock poisoned"))?;
+        *guard = compiled;
+        Ok(())
+    }
+
+    pub fn api_tokens(&self) -> Result<Vec<ApiTokenConfig>> {
+        let guard = self
+            .api_tokens
+            .read()
+            .map_err(|_| anyhow::anyhow!("api tokens lock poisoned"))?;
+        Ok(guard.iter().map(|token| token.raw.clone()).collect())
+    }
+
+    fn resolve_user_from_api_token(
+        &self,
+        token: &str,
+        source_ip: Option<&str>,
+    ) -> Result<AuthUser, ApiTokenAuthError> {
         let token = token.trim();
         if token.is_empty() {
-            return None;
+            return Err(ApiTokenAuthError::InvalidToken);
         }
 
-        for api_token in self.api_tokens.iter() {
-            if api_token.disabled {
+        let guard = self
+            .api_tokens
+            .read()
+            .map_err(|_| ApiTokenAuthError::InvalidToken)?;
+        for api_token in guard.iter() {
+            if api_token.raw.disabled {
                 continue;
             }
-            let parsed_hash = match PasswordHash::new(&api_token.token_hash) {
+            let parsed_hash = match PasswordHash::new(&api_token.raw.token_hash) {
                 Ok(hash) => hash,
                 Err(_) => continue,
             };
@@ -287,15 +336,43 @@ impl AuthManager {
                 .verify_password(token.as_bytes(), &parsed_hash)
                 .is_ok()
             {
-                return Some(AuthUser {
-                    username: api_token.name.clone(),
-                    role: api_token.role,
+                if !api_token.allowed_sources.is_empty() {
+                    let source_ip = source_ip.ok_or(ApiTokenAuthError::SourceIpRequired)?;
+                    let addr = source_ip
+                        .parse::<std::net::IpAddr>()
+                        .map_err(|_| ApiTokenAuthError::SourceIpRequired)?;
+                    if !api_token
+                        .allowed_sources
+                        .iter()
+                        .any(|net| net.contains(&addr))
+                    {
+                        return Err(ApiTokenAuthError::SourceNotAllowed);
+                    }
+                }
+                return Ok(AuthUser {
+                    username: api_token.raw.name.clone(),
+                    role: api_token.raw.role,
                     auth_mode: "api_token".to_string(),
                 });
             }
         }
-        None
+        Err(ApiTokenAuthError::InvalidToken)
     }
+}
+
+fn compile_api_tokens(tokens: &[ApiTokenConfig]) -> Result<Vec<CompiledApiToken>> {
+    let mut out = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let mut allowed_sources = Vec::with_capacity(token.allowed_sources.len());
+        for source in &token.allowed_sources {
+            allowed_sources.push(parse_allowed_source(source)?);
+        }
+        out.push(CompiledApiToken {
+            raw: token.clone(),
+            allowed_sources,
+        });
+    }
+    Ok(out)
 }
 
 pub fn has_min_role(user: &AuthUser, required: RoleName) -> bool {
@@ -490,7 +567,10 @@ mod tests {
             name: "svc-servicenow".to_string(),
             token_hash: hash_secret("secret-token-value"),
             role: RoleName::Analyst,
+            allowed_sources: Vec::new(),
             disabled: false,
+            created_at: None,
+            updated_at: None,
         }];
         let manager = AuthManager::new(&cfg).await.expect("create manager");
         let mut headers = HeaderMap::new();
@@ -500,8 +580,9 @@ mod tests {
         );
 
         let user = manager
-            .resolve_user_from_api_token_header(&headers)
+            .resolve_user_from_api_token_header(&headers, Some("127.0.0.1"))
             .expect("api token user");
+        let user = user.expect("resolved user");
         assert_eq!(user.username, "svc-servicenow");
         assert_eq!(user.role, RoleName::Analyst);
         assert_eq!(user.auth_mode, "api_token");
@@ -515,5 +596,55 @@ mod tests {
             HeaderValue::from_static("secret-token-value"),
         );
         assert_eq!(extract_api_token(&headers), Some("secret-token-value"));
+    }
+
+    #[tokio::test]
+    async fn api_token_enforces_allowed_sources() {
+        let mut cfg = local_auth_cfg();
+        cfg.api_tokens.tokens = vec![ApiTokenConfig {
+            name: "svc-servicenow".to_string(),
+            token_hash: hash_secret("secret-token-value"),
+            role: RoleName::Analyst,
+            allowed_sources: vec!["10.0.0.0/24".to_string()],
+            disabled: false,
+            created_at: None,
+            updated_at: None,
+        }];
+        let manager = AuthManager::new(&cfg).await.expect("create manager");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-token-value"),
+        );
+
+        let err = manager
+            .resolve_user_from_api_token_header(&headers, Some("192.168.1.10"))
+            .expect_err("source must be rejected");
+        assert_eq!(err, ApiTokenAuthError::SourceNotAllowed);
+    }
+
+    #[tokio::test]
+    async fn disabled_api_token_is_rejected() {
+        let mut cfg = local_auth_cfg();
+        cfg.api_tokens.tokens = vec![ApiTokenConfig {
+            name: "svc-servicenow".to_string(),
+            token_hash: hash_secret("secret-token-value"),
+            role: RoleName::Analyst,
+            allowed_sources: Vec::new(),
+            disabled: true,
+            created_at: None,
+            updated_at: None,
+        }];
+        let manager = AuthManager::new(&cfg).await.expect("create manager");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret-token-value"),
+        );
+
+        let err = manager
+            .resolve_user_from_api_token_header(&headers, Some("127.0.0.1"))
+            .expect_err("disabled token should be rejected");
+        assert_eq!(err, ApiTokenAuthError::InvalidToken);
     }
 }

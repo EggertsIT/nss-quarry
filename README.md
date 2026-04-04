@@ -25,6 +25,7 @@ Production/commercial use requires a paid monthly commercial subscription from t
   - `oidc_okta`
   - `local_users` (small environments)
 - Optional API-token auth for backend automation and integrations.
+- Admin-managed API tokens with source allowlists and runtime revocation.
 - Full audit log of auth/query/export/admin actions.
 - Health probes: `/healthz`, `/readyz`.
 
@@ -162,6 +163,13 @@ This prints:
 
 Use API tokens for backend integrations such as ServiceNow. Recommended role for automation is `analyst`, not `admin`.
 
+Runtime token handling:
+- bootstrap tokens can be defined in `auth.api_tokens.tokens`
+- on first run they are seeded into `/var/lib/nss-quarry/api_tokens.json` (derived from `audit.path`)
+- after that, manage tokens from the Dashboard `Config` tab or the admin token APIs
+- token usage and denied token attempts are audited
+- each token can have a source IP/CIDR allowlist and can be disabled without restarting the service
+
 ## Run
 
 ```bash
@@ -187,6 +195,9 @@ Full API reference with Python examples:
 - `GET /api/dashboards/{name}`
 - `GET /api/audit` (admin only, server-side pagination and filtering)
 - `GET /api/audit/export/csv` (admin only, filter-aware export; capped to 50k rows)
+- `GET /api/admin/api-tokens` (admin only; lists managed API tokens)
+- `POST /api/admin/api-tokens` (admin only; creates a new API token and returns the plaintext token once)
+- `PUT /api/admin/api-tokens/{name}` (admin only; updates role, source allowlist, and enabled/disabled state)
 - `GET /api/admin/visibility-filters` (admin only; returns URL regex + blocked IP exclusion rules)
 - `PUT /api/admin/visibility-filters` (admin only; updates and persists exclusion rules)
 - `POST /api/admin/ingestor/force-finalize-open-files` (admin only; calls `nss-ingestor` force-finalize API and writes audit event with actor/time/source IP)
@@ -194,6 +205,7 @@ Full API reference with Python examples:
 API authentication:
 - session cookie for browser and interactive login
 - `Authorization: Bearer <token>` or `X-API-Token: <token>` for automation API clients
+- API tokens can be source-restricted by IP or CIDR and disabled at runtime
 
 `/api/audit` query parameters:
 - `page` (default `1`)
@@ -216,6 +228,7 @@ API authentication:
 - In `helpdesk` role, fields in `security.helpdesk_mask_fields` are redacted.
 - HTTPS is the default install path (`install.sh`) and uses `auth.secure_cookie = true`.
 - Set `secure_cookie = false` only for isolated local HTTP testing.
+- Prefer `analyst` API tokens for integrations; avoid `admin` tokens unless the workflow truly needs admin APIs.
 - Keep audit log path protected by filesystem permissions.
 - For enterprise SSO design, role claim strategy, and troubleshooting:
   - `docs/oidc-setup.md`

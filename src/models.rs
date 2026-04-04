@@ -173,3 +173,41 @@ pub struct IngestorForceFinalizeOpenFilesResponse {
     #[serde(default)]
     pub result: Option<IngestorForceFinalizeOpenFilesResult>,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiTokenInfo {
+    pub name: String,
+    pub role: RoleName,
+    pub allowed_sources: Vec<String>,
+    pub disabled: bool,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiTokenListResponse {
+    pub rows: Vec<ApiTokenInfo>,
+    pub generated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiTokenCreateRequest {
+    pub name: String,
+    pub role: RoleName,
+    #[serde(default)]
+    pub allowed_sources: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiTokenCreateResponse {
+    pub token: String,
+    pub token_info: ApiTokenInfo,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ApiTokenUpdateRequest {
+    pub role: RoleName,
+    #[serde(default)]
+    pub allowed_sources: Vec<String>,
+    pub disabled: bool,
+}

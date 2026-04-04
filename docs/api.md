@@ -43,6 +43,8 @@ Automation auth:
   - `Authorization: Bearer <token>`
   - `X-API-Token: <token>`
 - API-token auth is intended for non-browser integrations such as ServiceNow workflows
+- API tokens can be restricted to specific source IPs or CIDR ranges
+- API tokens can be disabled at runtime by an admin without restarting the service
 
 Role levels:
 - `helpdesk`
@@ -58,6 +60,7 @@ Operational note:
 - session state is held in-memory by `nss-quarry`
 - a service restart invalidates existing sessions
 - API tokens are config-backed and survive service restarts
+- bootstrap tokens from `auth.api_tokens.tokens` are seeded into the managed token store on first run
 
 ## Common Python Setup
 
@@ -118,6 +121,14 @@ session.headers.update({
 })
 ```
 
+Equivalent custom header:
+
+```python
+session.headers.update({
+    "X-API-Token": API_TOKEN,
+})
+```
+
 Error format for application errors:
 
 ```json
@@ -152,6 +163,9 @@ Typical error status codes:
 | `POST` | `/api/pcap/analyze` | `helpdesk+` | analyze `.pcap` or `.pcapng` |
 | `GET` | `/api/dashboards/{name}` | `helpdesk+` | 24h dashboard aggregate payload |
 | `GET` | `/api/schema` | `helpdesk+` | schema mapping and detected parquet columns |
+| `GET` | `/api/admin/api-tokens` | `admin` | list managed API tokens |
+| `POST` | `/api/admin/api-tokens` | `admin` | create a managed API token |
+| `PUT` | `/api/admin/api-tokens/{name}` | `admin` | update role, source allowlist, or enabled state |
 | `GET` | `/api/admin/visibility-filters` | `admin` | read hidden URL/IP rules |
 | `PUT` | `/api/admin/visibility-filters` | `admin` | update hidden URL/IP rules |
 | `GET` | `/api/audit` | `admin` | list audit events |
@@ -581,7 +595,94 @@ Useful fields:
 - `default_columns`
 - `helpdesk_mask_fields`
 
+If the request used an API token, `auth_mode` is returned as `api_token`.
+
+If an API token is presented from a source outside its allowlist, the API returns:
+
+```json
+{
+  "error": "api token source is not allowed"
+}
+```
+
 ## Admin APIs
+
+### `GET /api/admin/api-tokens`
+
+Returns token metadata without exposing token hashes or plaintext tokens.
+
+Python:
+
+```python
+response = require_ok(session.get(f"{BASE_URL}/api/admin/api-tokens"))
+pretty(response.json())
+```
+
+### `POST /api/admin/api-tokens`
+
+Creates a new API token and returns the plaintext token once.
+
+Request body:
+
+```json
+{
+  "name": "svc-servicenow-analyst",
+  "role": "analyst",
+  "allowed_sources": [
+    "10.0.0.0/24",
+    "192.168.1.10"
+  ]
+}
+```
+
+Python:
+
+```python
+payload = {
+    "name": "svc-servicenow-analyst",
+    "role": "analyst",
+    "allowed_sources": ["10.0.0.0/24", "192.168.1.10"],
+}
+response = require_ok(session.post(f"{BASE_URL}/api/admin/api-tokens", json=payload))
+created = response.json()
+pretty(created["token_info"])
+print("copy token now:", created["token"])
+```
+
+Notes:
+- the plaintext token is shown only in this create response
+- the server stores only the Argon2 hash
+- source entries can be a single IP or a CIDR range
+
+### `PUT /api/admin/api-tokens/{name}`
+
+Updates an existing token’s role, source allowlist, or enabled state.
+
+Request body:
+
+```json
+{
+  "role": "analyst",
+  "allowed_sources": [
+    "10.0.0.0/24"
+  ],
+  "disabled": true
+}
+```
+
+Python:
+
+```python
+payload = {
+    "role": "analyst",
+    "allowed_sources": ["10.0.0.0/24"],
+    "disabled": True,
+}
+response = require_ok(
+    session.put(f"{BASE_URL}/api/admin/api-tokens/svc-servicenow-analyst", json=payload)
+)
+pretty(response.json())
+```
 
 ### `GET /authz/ingestor`
 
@@ -873,6 +974,7 @@ for row in search["rows"][:10]:
 - Use comma-separated `server_ip` values when correlating multiple destination IPs from PCAP analysis.
 - Expect helpdesk masking when authenticating with a helpdesk role.
 - Expect admin visibility filters to hide rows from search and dashboards.
+- Keep token allowlists tight and disable unused tokens instead of leaving them dormant.
 
 ## Related Documents
 

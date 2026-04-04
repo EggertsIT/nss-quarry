@@ -48,7 +48,8 @@ admin_groups = ["nss-admin"]
 name = "svc-servicenow-analyst"
 token_hash = "$argon2id$v=19$m=19456,t=2,p=1$REPLACE$REPLACE"
 role = "analyst"
-disabled = true
+allowed_sources = ["10.0.0.0/24", "192.168.1.10"]
+disabled = false
 
 [[auth.local_users.users]]
 username = "admin"

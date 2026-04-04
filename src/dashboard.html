@@ -594,6 +594,41 @@
         </form>
         <div id="visibility-msg" class="message"></div>
       </div>
+      <div id="api-token-panel" class="panel hidden" style="margin-top: 14px;">
+        <h3>API Tokens (Admin)</h3>
+        <div class="muted" style="margin-bottom:8px;">
+          Create least-privilege API tokens for automation clients. Source whitelist entries can be single IPs or CIDR ranges.
+        </div>
+        <form id="api-token-form" class="form-grid">
+          <div>
+            <label for="token-name">Token Name</label>
+            <input id="token-name" placeholder="svc-servicenow-analyst">
+          </div>
+          <div>
+            <label for="token-role">Role</label>
+            <select id="token-role">
+              <option value="helpdesk">helpdesk</option>
+              <option value="analyst" selected>analyst</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div style="grid-column: 1 / -1;">
+            <label for="token-allowed-sources">Allowed Sources (one IP or CIDR per line, optional)</label>
+            <textarea id="token-allowed-sources" rows="5" placeholder="10.0.0.0/24&#10;192.168.1.10"></textarea>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="token-create" type="button" class="primary">Create Token</button>
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="token-reload" type="button" class="ghost">Reload Tokens</button>
+          </div>
+        </form>
+        <div id="token-msg" class="message"></div>
+        <pre id="token-secret" class="hidden" style="margin-top:8px; white-space:pre-wrap; background: rgba(255,255,255,0.64); border:1px solid var(--line); border-radius: 10px; padding: 12px;"></pre>
+        <div id="token-view" class="table-wrap" style="margin-top: 12px;"></div>
+      </div>
       </div>
 
       <div class="panel hidden" id="view-ingestor" style="margin-top: 14px;">
@@ -863,6 +898,7 @@
       $("menu-ingestor").classList.toggle("hidden", !isAdmin);
       $("menu-audit").classList.toggle("hidden", !isAdmin);
       $("visibility-panel").classList.toggle("hidden", !isAdmin);
+      $("api-token-panel").classList.toggle("hidden", !isAdmin);
       setView(activeView);
     }
 
@@ -2149,6 +2185,121 @@
       setMessage("visibility-msg", "Visibility filters saved.", true);
     }
 
+    function renderApiTokens(tokens) {
+      const host = $("token-view");
+      host.innerHTML = "";
+      if (!Array.isArray(tokens) || tokens.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "muted";
+        empty.textContent = "No API tokens configured.";
+        host.appendChild(empty);
+        return;
+      }
+
+      const table = document.createElement("table");
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      for (const col of ["name", "role", "status", "allowed_sources", "created_at", "updated_at", "actions"]) {
+        const th = document.createElement("th");
+        th.textContent = col;
+        headRow.appendChild(th);
+      }
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const token of tokens) {
+        const tr = document.createElement("tr");
+        const values = [
+          token.name || "",
+          token.role || "",
+          token.disabled ? "disabled" : "active",
+          Array.isArray(token.allowed_sources) && token.allowed_sources.length > 0 ? token.allowed_sources.join(", ") : "any",
+          token.created_at || "",
+          token.updated_at || "",
+        ];
+        for (const value of values) {
+          const td = document.createElement("td");
+          td.textContent = String(value || "");
+          td.title = String(value || "");
+          tr.appendChild(td);
+        }
+
+        const actions = document.createElement("td");
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "ghost";
+        toggle.textContent = token.disabled ? "Enable" : "Disable";
+        toggle.addEventListener("click", async () => {
+          try {
+            await updateApiToken(token.name, {
+              role: token.role,
+              allowed_sources: Array.isArray(token.allowed_sources) ? token.allowed_sources : [],
+              disabled: !token.disabled,
+            });
+          } catch (err) {
+            setMessage("token-msg", err.message || "Failed to update API token.");
+          }
+        });
+        actions.appendChild(toggle);
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      host.appendChild(table);
+    }
+
+    async function loadApiTokensIfAdmin() {
+      if (!isAdminUser()) {
+        $("token-view").innerHTML = "";
+        $("token-secret").textContent = "";
+        $("token-secret").classList.add("hidden");
+        setMessage("token-msg", "");
+        return;
+      }
+      const data = await apiFetch("/api/admin/api-tokens", { method: "GET" });
+      renderApiTokens(data.rows || []);
+      setMessage("token-msg", "API tokens loaded.", true);
+    }
+
+    async function createApiToken() {
+      if (!isAdminUser()) {
+        setMessage("token-msg", "Admin role required.");
+        return;
+      }
+      const payload = {
+        name: $("token-name").value.trim(),
+        role: $("token-role").value,
+        allowed_sources: linesFromTextarea("token-allowed-sources"),
+      };
+      const created = await apiFetch("/api/admin/api-tokens", {
+        method: "POST",
+        body: payload,
+      });
+      $("token-secret").textContent = `Copy this token now. It will not be shown again.\n\n${created.token}`;
+      $("token-secret").classList.remove("hidden");
+      $("token-name").value = "";
+      $("token-role").value = "analyst";
+      $("token-allowed-sources").value = "";
+      const data = await apiFetch("/api/admin/api-tokens", { method: "GET" });
+      renderApiTokens(data.rows || []);
+      setMessage("token-msg", `API token '${created.token_info.name}' created.`, true);
+    }
+
+    async function updateApiToken(name, payload) {
+      if (!isAdminUser()) {
+        setMessage("token-msg", "Admin role required.");
+        return;
+      }
+      const updated = await apiFetch(`/api/admin/api-tokens/${encodeURIComponent(name)}`, {
+        method: "PUT",
+        body: payload,
+      });
+      const data = await apiFetch("/api/admin/api-tokens", { method: "GET" });
+      renderApiTokens(data.rows || []);
+      setMessage("token-msg", `API token '${updated.name}' updated.`, true);
+    }
+
     async function loadAuditIfAdmin() {
       if (!isAdminUser()) {
         return;
@@ -2198,6 +2349,7 @@
       if (isAdminUser()) {
         tasks.push(loadAuditIfAdmin());
         tasks.push(loadVisibilityFiltersIfAdmin());
+        tasks.push(loadApiTokensIfAdmin());
       }
       await Promise.all(tasks);
     }
@@ -2262,8 +2414,9 @@
         if (isAdminUser()) {
           try {
             await loadVisibilityFiltersIfAdmin();
+            await loadApiTokensIfAdmin();
           } catch (err) {
-            setMessage("visibility-msg", err.message || "Failed to load visibility filters.");
+            setMessage("visibility-msg", err.message || "Failed to load config data.");
           }
         }
       });
@@ -2370,6 +2523,20 @@
           await loadVisibilityFiltersIfAdmin();
         } catch (err) {
           setMessage("visibility-msg", err.message || "Failed to load visibility filters.");
+        }
+      });
+      $("token-create").addEventListener("click", async () => {
+        try {
+          await createApiToken();
+        } catch (err) {
+          setMessage("token-msg", err.message || "Failed to create API token.");
+        }
+      });
+      $("token-reload").addEventListener("click", async () => {
+        try {
+          await loadApiTokensIfAdmin();
+        } catch (err) {
+          setMessage("token-msg", err.message || "Failed to load API tokens.");
         }
       });
 

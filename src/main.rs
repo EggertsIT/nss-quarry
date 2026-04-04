@@ -28,10 +28,11 @@ use tokio::io::AsyncWriteExt;
 use tracing::{error, info};
 
 use crate::audit::AuditLogger;
-use crate::auth::{AuthManager, has_min_role};
-use crate::config::{AppConfig, AuthMode, RoleName};
+use crate::auth::{ApiTokenAuthError, AuthManager, has_min_role};
+use crate::config::{ApiTokenConfig, AppConfig, AuthMode, RoleName};
 use crate::models::{
-    AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
+    ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenInfo, ApiTokenListResponse,
+    ApiTokenUpdateRequest, AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
     IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
     PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
 };
@@ -77,6 +78,7 @@ struct AppState {
     audit: AuditLogger,
     query: QueryService,
     ingestor_client: reqwest::Client,
+    api_tokens_path: PathBuf,
     visibility_filters_path: PathBuf,
 }
 
@@ -156,6 +158,9 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let visibility_filters_path = visibility_filters_path_for_config(&cfg);
     let visibility_filters = load_visibility_filters(&visibility_filters_path).await?;
     query.set_visibility_filters(visibility_filters.clone())?;
+    let api_tokens_path = api_tokens_path_for_config(&cfg);
+    let api_tokens = load_api_tokens(&api_tokens_path, &cfg.auth.api_tokens.tokens).await?;
+    auth.set_api_tokens(api_tokens.clone())?;
     let audit = AuditLogger::new(&cfg.audit).await?;
     let ingestor_client = reqwest::Client::builder()
         .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
@@ -167,6 +172,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         audit,
         query,
         ingestor_client,
+        api_tokens_path,
         visibility_filters_path,
     };
     info!(
@@ -174,6 +180,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         rules_blocked_ips = visibility_filters.blocked_ips.len(),
         "loaded visibility filters"
     );
+    info!(api_tokens = api_tokens.len(), "loaded api tokens");
 
     let app = build_router(state);
 
@@ -212,6 +219,14 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
+        .route(
+            "/api/admin/api-tokens",
+            get(api_admin_api_tokens_get).post(api_admin_api_tokens_create),
+        )
+        .route(
+            "/api/admin/api-tokens/{name}",
+            axum::routing::put(api_admin_api_tokens_update),
+        )
         .route(
             "/api/admin/visibility-filters",
             get(api_admin_visibility_filters_get).put(api_admin_visibility_filters_put),
@@ -357,8 +372,31 @@ async fn api_me(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Result<Json<AuthResponse>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username.clone()),
+            role: Some(user.role),
+            action: "api.me".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+            }),
+        })
+        .await;
     Ok(Json(AuthResponse { user }))
 }
 
@@ -366,8 +404,31 @@ async fn authz_ingestor(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Result<StatusCode, AppError> {
-    let _ = require_user(&state, &jar, &headers, RoleName::Admin).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "authz.ingestor".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+            }),
+        })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -378,8 +439,15 @@ async fn api_admin_ingestor_force_finalize_open_files(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
-    let user = require_user(&state, &jar, &auth_headers, RoleName::Admin).await?;
     let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &auth_headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
     let url = format!(
         "{}/api/admin/force-finalize-open-files",
         state.cfg.ingestor.base_url.trim_end_matches('/')
@@ -421,6 +489,7 @@ async fn api_admin_ingestor_force_finalize_open_files(
                 format!("http_{}", upstream_status.as_u16())
             },
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
                 "source_ip": source_ip,
                 "upstream_status": upstream_status.as_u16(),
                 "response": response_payload,
@@ -437,9 +506,18 @@ async fn api_search(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Json<crate::models::SearchResponse>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
     let result = state
         .query
         .search(req.clone(), user.role)
@@ -454,6 +532,8 @@ async fn api_search(
             action: "query.search".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "query": req,
                 "rows": result.row_count
             }),
@@ -466,9 +546,18 @@ async fn api_export_csv(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(req): Json<SearchRequest>,
 ) -> Result<Response, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
     let csv = state
         .query
         .export_csv(req.clone(), user.role)
@@ -483,6 +572,8 @@ async fn api_export_csv(
             action: "query.export_csv".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "query": req,
                 "bytes": csv.len()
             }),
@@ -515,9 +606,18 @@ async fn api_pcap_analyze(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     mut multipart: Multipart,
 ) -> Result<Json<PcapAnalyzeResponse>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
     let mut file_name: Option<String> = None;
     let mut pcap_path: Option<PathBuf> = None;
     let mut uploaded_bytes: u64 = 0;
@@ -601,6 +701,8 @@ async fn api_pcap_analyze(
             action: "query.pcap_analyze".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "file_name": file_name,
                 "link_type": response.link_type,
                 "time_from": response.time_from,
@@ -629,9 +731,18 @@ async fn api_dashboard(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Path(name): Path<String>,
 ) -> Result<Json<crate::models::DashboardResponse>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
     let data = state
         .query
         .dashboard(&name, user.role)
@@ -645,7 +756,11 @@ async fn api_dashboard(
             role: Some(user.role),
             action: "query.dashboard".to_string(),
             outcome: "success".to_string(),
-            metadata: serde_json::json!({ "name": name }),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "name": name
+            }),
         })
         .await;
     Ok(Json(data))
@@ -655,8 +770,17 @@ async fn api_schema(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Result<Json<SchemaResponse>, AppError> {
-    let _user = require_user(&state, &jar, &headers, RoleName::Helpdesk).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
     let fields = vec![
         SchemaFieldInfo {
             name: "time_field".to_string(),
@@ -732,7 +856,7 @@ async fn api_schema(
         AuthMode::OidcOkta => "oidc_okta",
         AuthMode::LocalUsers => "local_users",
     };
-    Ok(Json(SchemaResponse {
+    let response = SchemaResponse {
         auth_mode: auth_mode.to_string(),
         fields,
         parquet_columns,
@@ -740,15 +864,40 @@ async fn api_schema(
         default_columns: state.cfg.query.default_columns.clone(),
         helpdesk_mask_fields: state.cfg.security.helpdesk_mask_fields.clone(),
         generated_at: Utc::now(),
-    }))
+    };
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.schema".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "parquet_columns": response.parquet_columns.len(),
+            }),
+        })
+        .await;
+    Ok(Json(response))
 }
 
 async fn api_admin_visibility_filters_get(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
 ) -> Result<Json<VisibilityFilters>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
     let rules = state
         .query
         .visibility_filters()
@@ -762,6 +911,8 @@ async fn api_admin_visibility_filters_get(
             action: "admin.visibility_filters.read".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "url_regex_rules": rules.url_regex.len(),
                 "blocked_ip_rules": rules.blocked_ips.len(),
             }),
@@ -774,9 +925,18 @@ async fn api_admin_visibility_filters_put(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Json(rules): Json<VisibilityFilters>,
 ) -> Result<Json<VisibilityFilters>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
     state
         .query
         .set_visibility_filters(rules.clone())
@@ -797,6 +957,8 @@ async fn api_admin_visibility_filters_put(
             action: "admin.visibility_filters.update".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "url_regex_rules": persisted.url_regex.len(),
                 "blocked_ip_rules": persisted.blocked_ips.len(),
                 "path": state.visibility_filters_path,
@@ -806,12 +968,177 @@ async fn api_admin_visibility_filters_put(
     Ok(Json(persisted))
 }
 
+async fn api_admin_api_tokens_get(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+) -> Result<Json<ApiTokenListResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
+    let rows = state
+        .auth
+        .api_tokens()
+        .map_err(AppError::internal)?
+        .into_iter()
+        .map(api_token_info_from_config)
+        .collect::<Vec<_>>();
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.api_tokens.read".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "tokens": rows.len(),
+            }),
+        })
+        .await;
+    Ok(Json(ApiTokenListResponse {
+        rows,
+        generated_at: Utc::now(),
+    }))
+}
+
+async fn api_admin_api_tokens_create(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<ApiTokenCreateRequest>,
+) -> Result<Json<ApiTokenCreateResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
+    let name = validate_api_token_name(&req.name).map_err(AppError::bad_request)?;
+    let now = Utc::now();
+    let mut tokens = state.auth.api_tokens().map_err(AppError::internal)?;
+    if tokens.iter().any(|token| token.name == name) {
+        return Err(AppError::bad_request(format!(
+            "api token '{}' already exists",
+            name
+        )));
+    }
+    let plain_token = generate_api_token_secret();
+    let token_hash = hash_secret(&plain_token).map_err(AppError::internal)?;
+    let token = ApiTokenConfig {
+        name: name.clone(),
+        token_hash,
+        role: req.role,
+        allowed_sources: normalize_allowed_sources(&req.allowed_sources)
+            .map_err(AppError::bad_request)?,
+        disabled: false,
+        created_at: Some(now),
+        updated_at: Some(now),
+    };
+    tokens.push(token.clone());
+    persist_api_tokens(&state, tokens).await?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: now,
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.api_tokens.create".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "token_name": token.name,
+                "token_role": token.role,
+                "allowed_sources": token.allowed_sources,
+            }),
+        })
+        .await;
+    Ok(Json(ApiTokenCreateResponse {
+        token: plain_token,
+        token_info: api_token_info_from_config(token),
+    }))
+}
+
+async fn api_admin_api_tokens_update(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(name): Path<String>,
+    Json(req): Json<ApiTokenUpdateRequest>,
+) -> Result<Json<ApiTokenInfo>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
+    let name = validate_api_token_name(&name).map_err(AppError::bad_request)?;
+    let mut tokens = state.auth.api_tokens().map_err(AppError::internal)?;
+    let normalized_sources =
+        normalize_allowed_sources(&req.allowed_sources).map_err(AppError::bad_request)?;
+    let token = tokens
+        .iter_mut()
+        .find(|token| token.name == name)
+        .ok_or_else(|| AppError::bad_request(format!("api token '{}' not found", name)))?;
+    token.role = req.role;
+    token.allowed_sources = normalized_sources;
+    token.disabled = req.disabled;
+    token.updated_at = Some(Utc::now());
+    let updated = token.clone();
+    persist_api_tokens(&state, tokens).await?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "admin.api_tokens.update".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "token_name": updated.name,
+                "token_role": updated.role,
+                "disabled": updated.disabled,
+                "allowed_sources": updated.allowed_sources,
+            }),
+        })
+        .await;
+    Ok(Json(api_token_info_from_config(updated)))
+}
+
 fn visibility_filters_path_for_config(cfg: &AppConfig) -> PathBuf {
     cfg.audit
         .path
         .parent()
         .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"))
         .join("visibility_filters.json")
+}
+
+fn api_tokens_path_for_config(cfg: &AppConfig) -> PathBuf {
+    cfg.audit
+        .path
+        .parent()
+        .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"))
+        .join("api_tokens.json")
 }
 
 async fn load_visibility_filters(path: &FsPath) -> Result<VisibilityFilters> {
@@ -847,6 +1174,97 @@ async fn save_visibility_filters(path: &FsPath, filters: &VisibilityFilters) -> 
         .await
         .with_context(|| format!("failed replacing {}", path.display()))?;
     Ok(())
+}
+
+async fn load_api_tokens(
+    path: &FsPath,
+    bootstrap: &[ApiTokenConfig],
+) -> Result<Vec<ApiTokenConfig>> {
+    let raw = match tokio::fs::read_to_string(path).await {
+        Ok(v) => Some(v),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed reading {}", path.display()));
+        }
+    };
+
+    if let Some(raw) = raw {
+        if raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        return serde_json::from_str(&raw)
+            .with_context(|| format!("failed parsing api tokens {}", path.display()));
+    }
+
+    let seeded = bootstrap.to_vec();
+    if !seeded.is_empty() {
+        save_api_tokens(path, &seeded).await?;
+    }
+    Ok(seeded)
+}
+
+async fn save_api_tokens(path: &FsPath, tokens: &[ApiTokenConfig]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .with_context(|| format!("failed creating {}", parent.display()))?;
+    }
+    let tmp = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
+    let payload = serde_json::to_vec_pretty(tokens).context("failed encoding api tokens")?;
+    tokio::fs::write(&tmp, payload)
+        .await
+        .with_context(|| format!("failed writing {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("failed replacing {}", path.display()))?;
+    Ok(())
+}
+
+async fn persist_api_tokens(state: &AppState, tokens: Vec<ApiTokenConfig>) -> Result<(), AppError> {
+    save_api_tokens(&state.api_tokens_path, &tokens)
+        .await
+        .map_err(AppError::internal)?;
+    state
+        .auth
+        .set_api_tokens(tokens)
+        .map_err(AppError::bad_request)?;
+    Ok(())
+}
+
+fn api_token_info_from_config(token: ApiTokenConfig) -> ApiTokenInfo {
+    ApiTokenInfo {
+        name: token.name,
+        role: token.role,
+        allowed_sources: token.allowed_sources,
+        disabled: token.disabled,
+        created_at: token.created_at,
+        updated_at: token.updated_at,
+    }
+}
+
+fn validate_api_token_name(name: &str) -> Result<String> {
+    let trimmed = name.trim();
+    let re = regex::Regex::new(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$").expect("valid regex");
+    if !re.is_match(trimmed) {
+        anyhow::bail!(
+            "invalid api token name '{}': allowed [A-Za-z0-9][A-Za-z0-9._:-]{{0,63}}",
+            trimmed
+        );
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_allowed_sources(values: &[String]) -> Result<Vec<String>> {
+    let mut out = values
+        .iter()
+        .map(|value| crate::config::parse_allowed_source(value))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .map(|net| net.to_string())
+        .collect::<Vec<_>>();
+    out.sort();
+    out.dedup();
+    Ok(out)
 }
 
 fn detect_parquet_columns(root: &std::path::Path) -> (Vec<ParquetColumnInfo>, Option<String>) {
@@ -972,9 +1390,18 @@ async fn api_audit(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<AuditListQuery>,
 ) -> Result<Json<AuditListResponse>, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
     let page = query.page.unwrap_or(1).max(1);
     let page_size = query
         .page_size
@@ -1001,6 +1428,8 @@ async fn api_audit(
             action: "admin.audit.read".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "page": page,
                 "page_size": page_size,
                 "returned": rows.len(),
@@ -1023,9 +1452,18 @@ async fn api_audit_export_csv(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(query): Query<AuditListQuery>,
 ) -> Result<Response, AppError> {
-    let user = require_user(&state, &jar, &headers, RoleName::Admin).await?;
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Admin,
+    )
+    .await?;
     let filtered = load_filtered_audit_events(&state.cfg.audit.path, &query)
         .await
         .map_err(AppError::internal)?;
@@ -1044,6 +1482,8 @@ async fn api_audit_export_csv(
             action: "admin.audit.export_csv".to_string(),
             outcome: "success".to_string(),
             metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
                 "rows": rows.len(),
                 "bytes": csv.len(),
                 "filters": audit_filter_metadata(&query),
@@ -1322,17 +1762,93 @@ async fn require_user(
     state: &AppState,
     jar: &CookieJar,
     headers: &HeaderMap,
+    source_ip: Option<&str>,
     min_role: RoleName,
 ) -> Result<crate::models::AuthUser, AppError> {
     let user = if let Some(user) = state.auth.resolve_user_from_cookie(jar).await {
         user
     } else {
-        state
+        match state
             .auth
-            .resolve_user_from_api_token_header(headers)
-            .ok_or_else(|| AppError::unauthorized(anyhow::anyhow!("authentication required")))?
+            .resolve_user_from_api_token_header(headers, source_ip)
+        {
+            Ok(Some(user)) => user,
+            Ok(None) => {
+                return Err(AppError::unauthorized(anyhow::anyhow!(
+                    "authentication required"
+                )));
+            }
+            Err(ApiTokenAuthError::InvalidToken) => {
+                state
+                    .audit
+                    .log(AuditEvent {
+                        at: Utc::now(),
+                        actor: None,
+                        role: None,
+                        action: "auth.api_token".to_string(),
+                        outcome: "invalid_token".to_string(),
+                        metadata: serde_json::json!({
+                            "source_ip": source_ip,
+                            "required_role": min_role,
+                        }),
+                    })
+                    .await;
+                return Err(AppError::unauthorized(anyhow::anyhow!("invalid api token")));
+            }
+            Err(ApiTokenAuthError::SourceIpRequired) => {
+                state
+                    .audit
+                    .log(AuditEvent {
+                        at: Utc::now(),
+                        actor: None,
+                        role: None,
+                        action: "auth.api_token".to_string(),
+                        outcome: "source_ip_required".to_string(),
+                        metadata: serde_json::json!({
+                            "source_ip": source_ip,
+                            "required_role": min_role,
+                        }),
+                    })
+                    .await;
+                return Err(AppError::forbidden(
+                    "source ip is required for this api token",
+                ));
+            }
+            Err(ApiTokenAuthError::SourceNotAllowed) => {
+                state
+                    .audit
+                    .log(AuditEvent {
+                        at: Utc::now(),
+                        actor: None,
+                        role: None,
+                        action: "auth.api_token".to_string(),
+                        outcome: "source_not_allowed".to_string(),
+                        metadata: serde_json::json!({
+                            "source_ip": source_ip,
+                            "required_role": min_role,
+                        }),
+                    })
+                    .await;
+                return Err(AppError::forbidden("api token source is not allowed"));
+            }
+        }
     };
     if !has_min_role(&user, min_role) {
+        state
+            .audit
+            .log(AuditEvent {
+                at: Utc::now(),
+                actor: Some(user.username.clone()),
+                role: Some(user.role),
+                action: "auth.role_check".to_string(),
+                outcome: "insufficient_role".to_string(),
+                metadata: serde_json::json!({
+                    "auth_mode": user.auth_mode,
+                    "source_ip": source_ip,
+                    "required_role": min_role,
+                }),
+            })
+            .await;
         return Err(AppError::forbidden("insufficient role"));
     }
     Ok(user)
@@ -1458,13 +1974,19 @@ mod security_tests {
                 name: "svc-analyst".to_string(),
                 token_hash: hash_secret("analyst-token"),
                 role: RoleName::Analyst,
+                allowed_sources: vec!["127.0.0.1/32".to_string()],
                 disabled: false,
+                created_at: None,
+                updated_at: None,
             },
             ApiTokenConfig {
                 name: "svc-admin".to_string(),
                 token_hash: hash_secret("admin-token"),
                 role: RoleName::Admin,
+                allowed_sources: vec!["127.0.0.1/32".to_string()],
                 disabled: false,
+                created_at: None,
+                updated_at: None,
             },
         ];
 
@@ -1495,8 +2017,18 @@ mod security_tests {
             audit,
             query,
             ingestor_client,
+            api_tokens_path: std::env::temp_dir()
+                .join(format!("nss-quarry-api-tokens-{}.json", Uuid::new_v4())),
             visibility_filters_path,
         })
+    }
+
+    fn with_local_peer(mut req: Request<Body>) -> Request<Body> {
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            8080,
+        )));
+        req
     }
 
     async fn login_cookie(app: &Router, username: &str, password: &str) -> String {
@@ -1530,14 +2062,22 @@ mod security_tests {
             .uri("/authz/ingestor")
             .body(Body::empty())
             .expect("request");
-        let res_ingestor = app.clone().oneshot(req_ingestor).await.expect("response");
+        let res_ingestor = app
+            .clone()
+            .oneshot(with_local_peer(req_ingestor))
+            .await
+            .expect("response");
         assert_eq!(res_ingestor.status(), StatusCode::UNAUTHORIZED);
 
         let req_audit = Request::builder()
             .uri("/api/audit")
             .body(Body::empty())
             .expect("request");
-        let res_audit = app.clone().oneshot(req_audit).await.expect("response");
+        let res_audit = app
+            .clone()
+            .oneshot(with_local_peer(req_audit))
+            .await
+            .expect("response");
         assert_eq!(res_audit.status(), StatusCode::UNAUTHORIZED);
 
         let mut req_finalize = Request::builder()
@@ -1558,7 +2098,11 @@ mod security_tests {
             .uri("/api/admin/visibility-filters")
             .body(Body::empty())
             .expect("request");
-        let res_visibility = app.clone().oneshot(req_visibility).await.expect("response");
+        let res_visibility = app
+            .clone()
+            .oneshot(with_local_peer(req_visibility))
+            .await
+            .expect("response");
         assert_eq!(res_visibility.status(), StatusCode::UNAUTHORIZED);
     }
 
@@ -1572,7 +2116,11 @@ mod security_tests {
             .header(header::COOKIE, cookie.clone())
             .body(Body::empty())
             .expect("request");
-        let res = app.clone().oneshot(req).await.expect("response");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
         let mut req_finalize = Request::builder()
@@ -1601,7 +2149,11 @@ mod security_tests {
             .header(header::COOKIE, cookie.clone())
             .body(Body::empty())
             .expect("request");
-        let res_get = app.clone().oneshot(req_get).await.expect("response");
+        let res_get = app
+            .clone()
+            .oneshot(with_local_peer(req_get))
+            .await
+            .expect("response");
         assert_eq!(res_get.status(), StatusCode::FORBIDDEN);
 
         let req_put = Request::builder()
@@ -1611,7 +2163,11 @@ mod security_tests {
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(r#"{"url_regex":[],"blocked_ips":["1.1.1.1"]}"#))
             .expect("request");
-        let res_put = app.clone().oneshot(req_put).await.expect("response");
+        let res_put = app
+            .clone()
+            .oneshot(with_local_peer(req_put))
+            .await
+            .expect("response");
         assert_eq!(res_put.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1625,7 +2181,11 @@ mod security_tests {
             .header(header::COOKIE, cookie)
             .body(Body::empty())
             .expect("request");
-        let res = app.clone().oneshot(req).await.expect("response");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1639,7 +2199,11 @@ mod security_tests {
             .header(header::COOKIE, cookie.clone())
             .body(Body::empty())
             .expect("request");
-        let res_ingestor = app.clone().oneshot(req_ingestor).await.expect("response");
+        let res_ingestor = app
+            .clone()
+            .oneshot(with_local_peer(req_ingestor))
+            .await
+            .expect("response");
         assert_eq!(res_ingestor.status(), StatusCode::NO_CONTENT);
 
         let req_audit = Request::builder()
@@ -1647,7 +2211,11 @@ mod security_tests {
             .header(header::COOKIE, cookie)
             .body(Body::empty())
             .expect("request");
-        let res_audit = app.clone().oneshot(req_audit).await.expect("response");
+        let res_audit = app
+            .clone()
+            .oneshot(with_local_peer(req_audit))
+            .await
+            .expect("response");
         assert_eq!(res_audit.status(), StatusCode::OK);
     }
 
@@ -1661,7 +2229,11 @@ mod security_tests {
             .header(header::COOKIE, cookie.clone())
             .body(Body::empty())
             .expect("request");
-        let res_get = app.clone().oneshot(req_get).await.expect("response");
+        let res_get = app
+            .clone()
+            .oneshot(with_local_peer(req_get))
+            .await
+            .expect("response");
         assert_eq!(res_get.status(), StatusCode::OK);
 
         let req_put = Request::builder()
@@ -1673,8 +2245,62 @@ mod security_tests {
                 r#"{"url_regex":["^blocked\\.example\\.com$"],"blocked_ips":["1.1.1.1"]}"#,
             ))
             .expect("request");
-        let res_put = app.clone().oneshot(req_put).await.expect("response");
+        let res_put = app
+            .clone()
+            .oneshot(with_local_peer(req_put))
+            .await
+            .expect("response");
         assert_eq!(res_put.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_can_manage_api_tokens() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "admin", "admin").await;
+
+        let req_get = Request::builder()
+            .uri("/api/admin/api-tokens")
+            .header(header::COOKIE, cookie.clone())
+            .body(Body::empty())
+            .expect("request");
+        let res_get = app
+            .clone()
+            .oneshot(with_local_peer(req_get))
+            .await
+            .expect("response");
+        assert_eq!(res_get.status(), StatusCode::OK);
+
+        let req_create = Request::builder()
+            .method("POST")
+            .uri("/api/admin/api-tokens")
+            .header(header::COOKIE, cookie.clone())
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"name":"svc-test","role":"analyst","allowed_sources":["127.0.0.1/32"]}"#,
+            ))
+            .expect("request");
+        let res_create = app
+            .clone()
+            .oneshot(with_local_peer(req_create))
+            .await
+            .expect("response");
+        assert_eq!(res_create.status(), StatusCode::OK);
+
+        let req_update = Request::builder()
+            .method("PUT")
+            .uri("/api/admin/api-tokens/svc-test")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"role":"analyst","allowed_sources":["127.0.0.1/32"],"disabled":true}"#,
+            ))
+            .expect("request");
+        let res_update = app
+            .clone()
+            .oneshot(with_local_peer(req_update))
+            .await
+            .expect("response");
+        assert_eq!(res_update.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -1685,8 +2311,28 @@ mod security_tests {
             .header(header::AUTHORIZATION, "Bearer analyst-token")
             .body(Body::empty())
             .expect("request");
-        let res = app.clone().oneshot(req).await.expect("response");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn api_token_source_whitelist_is_enforced_at_route_level() {
+        let app = test_app().await;
+        let mut req = Request::builder()
+            .uri("/api/me")
+            .header(header::AUTHORIZATION, "Bearer analyst-token")
+            .body(Body::empty())
+            .expect("request");
+        req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)),
+            8080,
+        )));
+        let res = app.clone().oneshot(req).await.expect("response");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -1697,7 +2343,11 @@ mod security_tests {
             .header(header::AUTHORIZATION, "Bearer analyst-token")
             .body(Body::empty())
             .expect("request");
-        let res = app.clone().oneshot(req).await.expect("response");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1709,7 +2359,11 @@ mod security_tests {
             .header(header::AUTHORIZATION, "Bearer admin-token")
             .body(Body::empty())
             .expect("request");
-        let res = app.clone().oneshot(req).await.expect("response");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
         assert_eq!(res.status(), StatusCode::OK);
     }
 
@@ -1727,7 +2381,11 @@ mod security_tests {
                 r#"{"url_regex":[],"blocked_ips":["not-an-ip"]}"#,
             ))
             .expect("request");
-        let res_put = app.clone().oneshot(req_put).await.expect("response");
+        let res_put = app
+            .clone()
+            .oneshot(with_local_peer(req_put))
+            .await
+            .expect("response");
         assert_eq!(res_put.status(), StatusCode::BAD_REQUEST);
     }
 

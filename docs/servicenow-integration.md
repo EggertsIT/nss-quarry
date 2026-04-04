@@ -141,6 +141,7 @@ Recommended:
 - store the token in ServiceNow credential storage / connection alias / secret store
 - authenticate over HTTPS
 - send `Authorization: Bearer <token>`
+- set `allowed_sources` to the MID Server egress IP or the private integration worker subnet
 
 Why API tokens are better here:
 - OIDC is ideal for interactive human login

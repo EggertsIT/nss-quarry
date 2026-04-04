@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use argon2::PasswordHash;
+use chrono::{DateTime, Utc};
+use ipnet::IpNet;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +77,15 @@ impl AppConfig {
                     token.name
                 )
             })?;
+            for source in &token.allowed_sources {
+                parse_allowed_source(source).map_err(|err| {
+                    anyhow::anyhow!(
+                        "auth.api_tokens.tokens[{}] has invalid allowed_sources entry '{}': {err}",
+                        token.name,
+                        source
+                    )
+                })?;
+            }
             if !api_token_names.insert(token.name.clone()) {
                 anyhow::bail!("duplicate auth.api_tokens token name '{}'", token.name);
             }
@@ -330,7 +341,27 @@ pub struct ApiTokenConfig {
     pub token_hash: String,
     pub role: RoleName,
     #[serde(default)]
+    pub allowed_sources: Vec<String>,
+    #[serde(default)]
     pub disabled: bool,
+    #[serde(default)]
+    pub created_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+pub fn parse_allowed_source(value: &str) -> Result<IpNet> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("source cannot be empty");
+    }
+    if let Ok(net) = trimmed.parse::<IpNet>() {
+        return Ok(net);
+    }
+    let ip = trimmed
+        .parse::<std::net::IpAddr>()
+        .map_err(|_| anyhow::anyhow!("expected IP or CIDR"))?;
+    Ok(IpNet::from(ip))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -423,7 +454,18 @@ impl Default for AuditConfig {
 
 #[cfg(test)]
 mod tests {
+    use argon2::Argon2;
+    use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
+
     use super::*;
+
+    fn hash_secret(secret: &str) -> String {
+        let salt = SaltString::generate(&mut OsRng);
+        Argon2::default()
+            .hash_password(secret.as_bytes(), &salt)
+            .expect("secret hash")
+            .to_string()
+    }
 
     fn valid_local_config() -> AppConfig {
         let mut cfg = AppConfig::default();
@@ -541,11 +583,32 @@ mod tests {
             name: "svc-servicenow".to_string(),
             token_hash: "not-a-hash".to_string(),
             role: RoleName::Analyst,
+            allowed_sources: Vec::new(),
             disabled: false,
+            created_at: None,
+            updated_at: None,
         }];
         let err = cfg
             .validate()
             .expect_err("must reject invalid api token hash");
         assert!(err.to_string().contains("invalid token_hash format"));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_api_token_allowed_source() {
+        let mut cfg = valid_local_config();
+        cfg.auth.api_tokens.tokens = vec![ApiTokenConfig {
+            name: "svc-servicenow".to_string(),
+            token_hash: hash_secret("secret-token"),
+            role: RoleName::Analyst,
+            allowed_sources: vec!["bad-cidr".to_string()],
+            disabled: false,
+            created_at: None,
+            updated_at: None,
+        }];
+        let err = cfg
+            .validate()
+            .expect_err("must reject invalid api token allowed source");
+        assert!(err.to_string().contains("invalid allowed_sources entry"));
     }
 }
