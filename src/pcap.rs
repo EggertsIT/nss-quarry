@@ -192,22 +192,46 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
     let mut src_ips = HashSet::new();
     let mut dst_ips = HashSet::new();
     let mut used_link_types = HashSet::new();
+    let mut malformed_tail = false;
 
     while offset + 12 <= data.len() {
         if data[offset..offset + 4] == PCAPNG_MAGIC {
-            let (order, block_len) = parse_pcapng_section_header(data, offset)?;
+            let (order, block_len) = match parse_pcapng_section_header(data, offset) {
+                Ok(v) => v,
+                Err(err) => {
+                    if packet_count > 0 {
+                        malformed_tail = true;
+                        break;
+                    }
+                    return Err(err);
+                }
+            };
             current_order = Some(order);
             interfaces.clear();
             offset += block_len;
             continue;
         }
 
-        let order = current_order.ok_or_else(|| {
-            anyhow::anyhow!("pcapng is missing a valid section header before data blocks")
-        })?;
+        let Some(order) = current_order else {
+            if packet_count > 0 {
+                malformed_tail = true;
+                break;
+            }
+            anyhow::bail!("pcapng is missing a valid section header before data blocks");
+        };
         let block_type = read_u32(&data[offset..offset + 4], order);
         let block_len = read_u32(&data[offset + 4..offset + 8], order) as usize;
-        validate_pcapng_block_bounds(data, offset, block_len, order)?;
+        if block_type == 0 && block_len == 0 {
+            // Some captures have trailing zero padding.
+            break;
+        }
+        if let Err(err) = validate_pcapng_block_bounds(data, offset, block_len, order) {
+            if packet_count > 0 {
+                malformed_tail = true;
+                break;
+            }
+            return Err(err);
+        }
         let body_start = offset + 8;
         let body_end = offset + block_len - 4;
         let body = &data[body_start..body_end];
@@ -282,6 +306,10 @@ fn analyze_pcapng_bytes(data: &[u8], max_ips: usize) -> Result<PcapAnalysis> {
         }
 
         offset += block_len;
+    }
+
+    if malformed_tail && packet_count == 0 {
+        anyhow::bail!("pcapng is truncated or corrupt (no valid packets parsed)");
     }
 
     let link_type = if used_link_types.is_empty() {
@@ -919,5 +947,18 @@ mod tests {
         data[0..4].copy_from_slice(&PCAPNG_MAGIC);
         let err = analyze_pcap_bytes(&data, 10).expect_err("must reject malformed pcapng");
         assert!(err.to_string().contains("pcapng"));
+    }
+
+    #[test]
+    fn parse_pcapng_with_truncated_tail_keeps_valid_packets() {
+        let mut pcapng = sample_ipv4_pcapng();
+        // Append an incomplete block header with an impossible length to simulate truncated tail.
+        push_u32_le(&mut pcapng, PCAPNG_BLOCK_ENHANCED_PACKET);
+        push_u32_le(&mut pcapng, 4096);
+
+        let summary = analyze_pcap_bytes(&pcapng, 500).expect("parse pcapng with bad tail");
+        assert_eq!(summary.packet_count, 1);
+        assert_eq!(summary.ip_packet_count, 1);
+        assert_eq!(summary.destination_ips, vec!["8.8.8.8".to_string()]);
     }
 }
