@@ -175,6 +175,7 @@ cargo run -- run --config ./config.toml
 - extracts capture start/end and unique destination IPs
 - dashboard can auto-apply extracted window + SIP list to Search Logs
 - upload cap is `100 MiB` per request
+- nginx upload limit is set to `110m` by installer (`client_max_body_size 110m`)
 
 ## Security Notes
 
@@ -239,6 +240,14 @@ sudo setfacl -m u:nssquarry:--x /var/lib/nss-ingestor
 sudo setfacl -m u:nssquarry:rX /var/lib/nss-ingestor/data
 sudo setfacl -R -m u:nssquarry:rX /var/lib/nss-ingestor/data
 curl -k https://127.0.0.1/readyz
+```
+
+If PCAP Assist returns HTTP `413`:
+
+```bash
+sudo sed -n '1,200p' /etc/nginx/conf.d/nss-quarry.conf | grep client_max_body_size
+sudo nginx -t
+sudo systemctl reload nginx
 ```
 
 If permissions are correct but recent data is still missing, check `nss-to-parquet` writer finalization settings.  

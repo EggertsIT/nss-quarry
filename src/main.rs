@@ -13,7 +13,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -156,7 +156,11 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/api/search", post(api_search))
         .route("/api/export/csv", post(api_export_csv))
-        .route("/api/pcap/analyze", post(api_pcap_analyze))
+        .route(
+            "/api/pcap/analyze",
+            post(api_pcap_analyze)
+                .layer(DefaultBodyLimit::max(MAX_PCAP_UPLOAD_BYTES + 1024 * 1024)),
+        )
         .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
         .route("/api/audit", get(api_audit))

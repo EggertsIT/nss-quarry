@@ -807,6 +807,7 @@ server {
 server {
     listen 443 ssl http2;
     server_name $FQDN;
+    client_max_body_size 110m;
 
     ssl_certificate $TLS_CERT;
     ssl_certificate_key $TLS_KEY;
