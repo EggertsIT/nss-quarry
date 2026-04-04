@@ -869,17 +869,21 @@
         throw new Error(msg);
       }
 
-      const from = new Date(payload.time_from);
-      const to = new Date(payload.time_to);
+      const from = new Date(payload.search_time_from || payload.time_from);
+      const to = new Date(payload.search_time_to || payload.time_to);
       $("time-from").value = toLocalInputValue(from);
       $("time-to").value = toLocalInputValue(to);
       $("f-sip").value = Array.isArray(payload.destination_ips) ? payload.destination_ips.join(", ") : "";
 
+      const padSeconds = Number(payload.search_window_pad_seconds || 0);
+      const padMinutes = Math.round(padSeconds / 60);
       const summary = [
         `link=${payload.link_type}`,
         `packets=${Number(payload.packet_count || 0).toLocaleString()}`,
         `ip_packets=${Number(payload.ip_packet_count || 0).toLocaleString()}`,
-        `window=${payload.time_from} -> ${payload.time_to}`,
+        `capture_window=${payload.time_from} -> ${payload.time_to}`,
+        `search_window=${payload.search_time_from || payload.time_from} -> ${payload.search_time_to || payload.time_to}`,
+        `search_pad=${padMinutes}m`,
         `duration=${Number(payload.duration_seconds || 0).toLocaleString()}s`,
         `unique_sip=${Number(payload.unique_destination_ip_count || 0).toLocaleString()}`,
         `returned_sip=${Array.isArray(payload.destination_ips) ? payload.destination_ips.length : 0}`,

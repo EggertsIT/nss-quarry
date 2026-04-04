@@ -436,6 +436,7 @@ async fn api_export_csv(
 const MAX_PCAP_UPLOAD_BYTES: u64 = 5_u64 * 1024 * 1024 * 1024;
 const DEFAULT_PCAP_MAX_IPS: usize = 500;
 const MAX_PCAP_MAX_IPS: usize = 5000;
+const PCAP_SEARCH_WINDOW_PAD_SECONDS: i64 = 5 * 60;
 
 fn pcap_upload_body_limit() -> usize {
     let with_slack = MAX_PCAP_UPLOAD_BYTES.saturating_add(1024 * 1024);
@@ -502,12 +503,19 @@ async fn api_pcap_analyze(
     let _ = tokio::fs::remove_file(&pcap_path).await;
     let summary = summary_result.map_err(AppError::bad_request)?;
     let duration_seconds = (summary.time_to - summary.time_from).num_seconds().max(0);
+    let search_time_from =
+        summary.time_from - chrono::Duration::seconds(PCAP_SEARCH_WINDOW_PAD_SECONDS);
+    let search_time_to =
+        summary.time_to + chrono::Duration::seconds(PCAP_SEARCH_WINDOW_PAD_SECONDS);
 
     let response = PcapAnalyzeResponse {
         file_name: file_name.clone(),
         link_type: summary.link_type,
         time_from: summary.time_from,
         time_to: summary.time_to,
+        search_time_from,
+        search_time_to,
+        search_window_pad_seconds: PCAP_SEARCH_WINDOW_PAD_SECONDS,
         duration_seconds,
         packet_count: summary.packet_count,
         ip_packet_count: summary.ip_packet_count,
@@ -529,6 +537,9 @@ async fn api_pcap_analyze(
                 "link_type": response.link_type,
                 "time_from": response.time_from,
                 "time_to": response.time_to,
+                "search_time_from": response.search_time_from,
+                "search_time_to": response.search_time_to,
+                "search_window_pad_seconds": response.search_window_pad_seconds,
                 "duration_seconds": response.duration_seconds,
                 "uploaded_bytes": uploaded_bytes,
                 "packet_count": response.packet_count,

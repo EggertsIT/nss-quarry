@@ -173,7 +173,8 @@ cargo run -- run --config ./config.toml
 `/api/pcap/analyze` notes:
 - supports classic `.pcap` and `.pcapng`
 - extracts capture start/end and unique destination IPs
-- dashboard can auto-apply extracted window + SIP list to Search Logs
+- dashboard auto-applies padded search window + SIP list to Search Logs
+- default padding is `-5 minutes` before capture start and `+5 minutes` after capture end
 - upload cap is `5 GiB` per request
 - uploads are streamed to a temporary file before analysis (does not load full file into memory)
 - nginx upload limit is set to `6g` by installer (`client_max_body_size 6g`)
