@@ -7,7 +7,7 @@ license = "BUSL-1.1"
 [dependencies]
 anyhow = "1.0"
 argon2 = "0.5"
-axum = { version = "0.8", features = ["macros"] }
+axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["cookie"] }
 base64 = "0.22"
 chrono = { version = "0.4.44", features = ["clock", "serde"] }

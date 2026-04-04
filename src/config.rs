@@ -165,8 +165,8 @@ impl Default for FieldMap {
     fn default() -> Self {
         Self {
             time_field: "time".to_string(),
-            user_field: "ologin".to_string(),
-            url_field: "eurl".to_string(),
+            user_field: "login".to_string(),
+            url_field: "url".to_string(),
             action_field: "action".to_string(),
             threat_field: "threatname".to_string(),
             category_field: "urlcat".to_string(),
@@ -284,7 +284,7 @@ impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             helpdesk_mask_fields: vec![
-                "ologin".to_string(),
+                "login".to_string(),
                 "cip".to_string(),
                 "devicehostname".to_string(),
             ],
@@ -313,8 +313,8 @@ impl Default for QueryConfig {
             default_columns: vec![
                 "time".to_string(),
                 "action".to_string(),
-                "eurl".to_string(),
-                "ologin".to_string(),
+                "url".to_string(),
+                "login".to_string(),
                 "cip".to_string(),
                 "urlcat".to_string(),
                 "threatname".to_string(),

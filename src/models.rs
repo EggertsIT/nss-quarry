@@ -54,6 +54,20 @@ pub struct SearchResponse {
 }
 
 #[derive(Debug, Serialize)]
+pub struct PcapAnalyzeResponse {
+    pub file_name: Option<String>,
+    pub link_type: String,
+    pub time_from: DateTime<Utc>,
+    pub time_to: DateTime<Utc>,
+    pub duration_seconds: i64,
+    pub packet_count: u64,
+    pub ip_packet_count: u64,
+    pub unique_destination_ip_count: usize,
+    pub destination_ips: Vec<String>,
+    pub truncated_ips: bool,
+}
+
+#[derive(Debug, Serialize)]
 pub struct DashboardResponse {
     pub name: String,
     pub generated_at: DateTime<Utc>,

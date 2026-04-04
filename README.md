@@ -109,6 +109,7 @@ cp config.example.toml config.toml
 
 2. Set at least:
 - `data.parquet_root` to your `nss-to-parquet` output directory.
+- field mapping in `data.fields` (fresh-install defaults are aligned to `nss-to-parquet` `zscaler_web_v2_ops`, including `user_field="login"` and `url_field="url"`).
 - `auth.mode`
 - auth settings for the chosen mode.
 - for production OIDC with Microsoft Entra ID or Okta, follow the dedicated guide:
@@ -152,6 +153,7 @@ cargo run -- run --config ./config.toml
 - `GET /api/me`
 - `POST /api/search`
 - `POST /api/export/csv`
+- `POST /api/pcap/analyze` (multipart upload: `pcap` file + optional `max_ips`)
 - `GET /api/dashboards/{name}`
 - `GET /api/audit` (admin only, server-side pagination and filtering)
 - `GET /api/audit/export/csv` (admin only, filter-aware export; capped to 50k rows)
@@ -161,6 +163,12 @@ cargo run -- run --config ./config.toml
 - `page_size` (default `50`, max `500`)
 - `from` / `to` (RFC3339 timestamps)
 - `actor`, `action`, `outcome`, `text` (case-insensitive contains filters)
+
+`/api/pcap/analyze` notes:
+- supports classic `.pcap` and `.pcapng`
+- extracts capture start/end and unique destination IPs
+- dashboard can auto-apply extracted window + SIP list to Search Logs
+- upload cap is `100 MiB` per request
 
 ## Security Notes
 

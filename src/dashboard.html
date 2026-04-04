@@ -232,6 +232,26 @@
       </div>
 
       <div class="panel" style="margin-top: 14px;">
+        <h3>PCAP Assist</h3>
+        <form id="pcap-form" class="form-grid">
+          <div>
+            <label for="pcap-file">PCAP file</label>
+            <input id="pcap-file" type="file" accept=".pcap,.cap,.pcapng,application/vnd.tcpdump.pcap" required>
+          </div>
+          <div>
+            <label for="pcap-max-ips">Max destination IPs</label>
+            <input id="pcap-max-ips" type="number" min="1" max="5000" value="500">
+          </div>
+          <div>
+            <label>&nbsp;</label>
+            <button id="pcap-analyze" type="submit" class="primary">Analyze PCAP</button>
+          </div>
+        </form>
+        <div id="pcap-msg" class="message"></div>
+        <div id="pcap-summary" class="muted"></div>
+      </div>
+
+      <div class="panel" style="margin-top: 14px;">
         <h3>Search Logs</h3>
         <form id="search-form" class="form-grid">
           <div><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
@@ -253,7 +273,7 @@
           <div><label for="f-sip">SIP (Destination IP)</label><input id="f-sip" placeholder="1.1.1.1, 8.8.8.8"></div>
           <div><label for="f-device">Device</label><input id="f-device" placeholder="LAPTOP-123"></div>
           <div><label for="f-dept">Department</label><input id="f-dept" placeholder="IT"></div>
-          <div><label for="columns">Columns (comma-separated, optional)</label><input id="columns" placeholder="time,action,eurl,ologin,cip"></div>
+          <div><label for="columns">Columns (comma-separated, optional)</label><input id="columns" placeholder="time,action,url,login,cip"></div>
           <div>
             <label>&nbsp;</label>
             <button type="submit" class="primary">Run Search</button>
@@ -781,6 +801,57 @@
       setMessage("search-msg", "CSV export downloaded.", true);
     }
 
+    async function analyzePcapAndApply() {
+      const fileInput = $("pcap-file");
+      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      if (!file) {
+        setMessage("pcap-msg", "Select a .pcap file first.");
+        return;
+      }
+      const maxIps = Math.max(1, Math.min(5000, Number.parseInt($("pcap-max-ips").value, 10) || 500));
+      setMessage("pcap-msg", "Analyzing PCAP...");
+      $("pcap-summary").textContent = "";
+
+      const form = new FormData();
+      form.append("pcap", file, file.name || "capture.pcap");
+      form.append("max_ips", String(maxIps));
+
+      const res = await fetch("/api/pcap/analyze", {
+        method: "POST",
+        credentials: "include",
+        body: form,
+      });
+      let payload = null;
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        payload = await res.json();
+      }
+      if (!res.ok) {
+        const msg = payload && payload.error ? payload.error : `${res.status} ${res.statusText}`;
+        throw new Error(msg);
+      }
+
+      const from = new Date(payload.time_from);
+      const to = new Date(payload.time_to);
+      $("time-from").value = toLocalInputValue(from);
+      $("time-to").value = toLocalInputValue(to);
+      $("f-sip").value = Array.isArray(payload.destination_ips) ? payload.destination_ips.join(", ") : "";
+
+      const summary = [
+        `link=${payload.link_type}`,
+        `packets=${Number(payload.packet_count || 0).toLocaleString()}`,
+        `ip_packets=${Number(payload.ip_packet_count || 0).toLocaleString()}`,
+        `window=${payload.time_from} -> ${payload.time_to}`,
+        `duration=${Number(payload.duration_seconds || 0).toLocaleString()}s`,
+        `unique_sip=${Number(payload.unique_destination_ip_count || 0).toLocaleString()}`,
+        `returned_sip=${Array.isArray(payload.destination_ips) ? payload.destination_ips.length : 0}`,
+        payload.truncated_ips ? "sip_list_truncated=yes" : "sip_list_truncated=no",
+      ].join(" | ");
+      $("pcap-summary").textContent = summary;
+      setMessage("pcap-msg", "PCAP analyzed and filters applied.", true);
+      await runSearch();
+    }
+
     async function loadSchema() {
       const schema = await apiFetch("/api/schema", { method: "GET" });
       latestSchema = schema;
@@ -979,6 +1050,14 @@
           await loadAuditIfAdmin();
         } catch (err) {
           setMessage("audit-msg", err.message || "Failed to load audit page.");
+        }
+      });
+      $("pcap-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        try {
+          await analyzePcapAndApply();
+        } catch (err) {
+          setMessage("pcap-msg", err.message || "PCAP analysis failed.");
         }
       });
       $("search-form").addEventListener("submit", async (e) => {

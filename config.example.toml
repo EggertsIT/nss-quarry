@@ -6,8 +6,8 @@ parquet_root = "/var/lib/nss-ingestor/data"
 
 [data.fields]
 time_field = "time"
-user_field = "ologin"
-url_field = "eurl"
+user_field = "login"
+url_field = "url"
 action_field = "action"
 threat_field = "threatname"
 category_field = "urlcat"
@@ -43,7 +43,7 @@ role = "admin"
 disabled = false
 
 [security]
-helpdesk_mask_fields = ["ologin", "cip", "devicehostname"]
+helpdesk_mask_fields = ["login", "cip", "devicehostname"]
 input_value_regex = "^[A-Za-z0-9@\\._:/\\-\\s]{1,256}$"
 
 [query]
@@ -51,7 +51,7 @@ max_days_per_query = 7
 default_limit = 200
 max_rows = 2000
 timeout_ms = 10000
-default_columns = ["time", "action", "eurl", "ologin", "cip", "urlcat", "threatname", "rulelabel"]
+default_columns = ["time", "action", "url", "login", "cip", "urlcat", "threatname", "rulelabel"]
 
 [audit]
 path = "/var/lib/nss-quarry/audit.log"

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use duckdb::Connection;
 use regex::Regex;
 
@@ -104,13 +104,18 @@ impl QueryService {
             .limit
             .unwrap_or(self.inner.default_limit)
             .min(self.inner.max_rows);
-        let sql = build_search_sql(
-            &columns,
-            &req,
-            &self.inner.fields,
-            &self.inner.parquet_root,
-            limit,
-        );
+
+        let Some(parquet_src) =
+            parquet_source_sql_for_range(&self.inner.parquet_root, req.time_from, req.time_to)?
+        else {
+            return Ok(SearchResponse {
+                rows: Vec::new(),
+                row_count: 0,
+                truncated: false,
+            });
+        };
+
+        let sql = build_search_sql(&columns, &req, &self.inner.fields, &parquet_src, limit);
 
         let conn = Connection::open_in_memory()?;
         let mut stmt = conn.prepare(&sql)?;
@@ -155,7 +160,35 @@ impl QueryService {
         let device_col = ident(&self.inner.fields.device_field);
         let ip_col = ident(&self.inner.fields.source_ip_field);
         let dept_col = ident(&self.inner.fields.department_field);
-        let parquet_src = parquet_source_sql(&self.inner.parquet_root);
+        let Some(parquet_src) =
+            parquet_source_sql_for_range(&self.inner.parquet_root, from_24h, now)?
+        else {
+            return Ok(DashboardResponse {
+                name: name.to_string(),
+                generated_at: now,
+                cards: vec![
+                    MetricCard {
+                        name: "events_24h".to_string(),
+                        value: 0,
+                    },
+                    MetricCard {
+                        name: "blocked_24h".to_string(),
+                        value: 0,
+                    },
+                    MetricCard {
+                        name: "threat_hits_24h".to_string(),
+                        value: 0,
+                    },
+                ],
+                tables: vec![
+                    empty_top_table("top_users"),
+                    empty_top_table("top_categories"),
+                    empty_top_table("top_devices"),
+                    empty_top_table("top_source_ips"),
+                    empty_top_table("top_departments"),
+                ],
+            });
+        };
 
         let conn = Connection::open_in_memory()?;
         let from_ts = from_24h.format("%Y-%m-%d %H:%M:%S").to_string();
@@ -189,7 +222,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    parquet_src: &parquet_src,
+                    parquet_src: parquet_src.as_str(),
                     limit: 10,
                 },
             )?,
@@ -201,7 +234,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    parquet_src: &parquet_src,
+                    parquet_src: parquet_src.as_str(),
                     limit: 10,
                 },
             )?,
@@ -213,7 +246,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    parquet_src: &parquet_src,
+                    parquet_src: parquet_src.as_str(),
                     limit: 10,
                 },
             )?,
@@ -225,7 +258,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    parquet_src: &parquet_src,
+                    parquet_src: parquet_src.as_str(),
                     limit: 10,
                 },
             )?,
@@ -237,7 +270,7 @@ impl QueryService {
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
-                    parquet_src: &parquet_src,
+                    parquet_src: parquet_src.as_str(),
                     limit: 10,
                 },
             )?,
@@ -321,6 +354,14 @@ fn top_n(conn: &Connection, args: TopNArgs<'_>) -> Result<TableBlock> {
     })
 }
 
+fn empty_top_table(name: &str) -> TableBlock {
+    TableBlock {
+        name: name.to_string(),
+        columns: vec!["value".to_string(), "count".to_string()],
+        rows: Vec::new(),
+    }
+}
+
 fn scalar_i64(conn: &Connection, sql: &str) -> Result<i64> {
     let mut stmt = conn.prepare(sql)?;
     let mut rows = stmt.query([])?;
@@ -374,7 +415,7 @@ fn build_search_sql(
     columns: &[String],
     req: &SearchRequest,
     fields: &FieldMap,
-    parquet_root: &Path,
+    parquet_src: &str,
     limit: u32,
 ) -> String {
     let time_col = ident(&fields.time_field);
@@ -442,8 +483,6 @@ fn build_search_sql(
         &fields.department_field,
         req.filters.department.as_deref(),
     );
-
-    let parquet_src = parquet_source_sql(parquet_root);
 
     format!(
         "SELECT {select_list} FROM {parquet_src} WHERE {} ORDER BY {time_col} DESC LIMIT {limit}",
@@ -564,14 +603,67 @@ fn validate_filter_value(value: Option<&str>, re: &Regex, allow_csv: bool) -> Re
     Ok(())
 }
 
-fn parquet_glob_pattern(root: &Path) -> String {
-    let raw = root.join("dt=*/hour=*/*.parquet").display().to_string();
-    raw.replace('\'', "''")
+fn parquet_source_sql_for_range(
+    root: &Path,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Option<String>> {
+    let files = parquet_files_for_range(root, from, to)?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parquet_source_sql_from_files(&files)))
 }
 
-fn parquet_source_sql(root: &Path) -> String {
-    let pattern = parquet_glob_pattern(root);
-    format!("read_parquet('{pattern}', union_by_name=true)")
+fn parquet_source_sql_from_files(files: &[PathBuf]) -> String {
+    let list = files
+        .iter()
+        .map(|path| format!("'{}'", escape_sql_literal(&path.display().to_string())))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("read_parquet([{list}], union_by_name=true)")
+}
+
+fn parquet_files_for_range(
+    root: &Path,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<PathBuf>> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    let mut cursor = floor_to_hour(from);
+    let end = floor_to_hour(to);
+    while cursor <= end {
+        let part_dir = root.join(format!(
+            "dt={}/hour={:02}",
+            cursor.format("%Y-%m-%d"),
+            cursor.hour()
+        ));
+        if part_dir.is_dir() {
+            for entry in std::fs::read_dir(&part_dir)? {
+                let entry = entry?;
+                let file_type = entry.file_type()?;
+                if file_type.is_file()
+                    && let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
+                    && ext.eq_ignore_ascii_case("parquet")
+                {
+                    files.push(entry.path());
+                }
+            }
+        }
+        cursor += chrono::Duration::hours(1);
+    }
+    files.sort();
+    Ok(files)
+}
+
+fn floor_to_hour(ts: DateTime<Utc>) -> DateTime<Utc> {
+    ts.with_minute(0)
+        .and_then(|t| t.with_second(0))
+        .and_then(|t| t.with_nanosecond(0))
+        .unwrap_or(ts)
 }
 
 fn validate_identifier(name: &str) -> Result<()> {
@@ -611,6 +703,8 @@ fn find_any_parquet(root: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use chrono::TimeZone;
 
     use super::*;
@@ -648,24 +742,23 @@ mod tests {
                 ..SearchFilters::default()
             },
             limit: Some(123),
-            columns: Some(vec!["time".to_string(), "eurl".to_string()]),
+            columns: Some(vec!["time".to_string(), "url".to_string()]),
         };
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
-        let sql = build_search_sql(&columns, &req, &fields, Path::new("/tmp/o'hare"), 123);
+        let src = "read_parquet(['/tmp/o''hare/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)";
+        let sql = build_search_sql(&columns, &req, &fields, src, 123);
 
         assert!(sql.contains(
-            "SELECT CAST(\"time\" AS VARCHAR) AS \"time\", CAST(\"eurl\" AS VARCHAR) AS \"eurl\""
+            "SELECT CAST(\"time\" AS VARCHAR) AS \"time\", CAST(\"url\" AS VARCHAR) AS \"url\""
         ));
-        assert!(
-            sql.contains("read_parquet('/tmp/o''hare/dt=*/hour=*/*.parquet', union_by_name=true)")
-        );
+        assert!(sql.contains("read_parquet(['/tmp/o''hare/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)"));
         assert!(sql.contains("ORDER BY \"time\" DESC LIMIT 123"));
 
         let escaped_url = escape_sql_literal("exa%m_ple'\\path");
-        assert!(sql.contains("STRPOS(LOWER(CAST(\"ologin\" AS VARCHAR)), LOWER('alice')) > 0"));
+        assert!(sql.contains("STRPOS(LOWER(CAST(\"login\" AS VARCHAR)), LOWER('alice')) > 0"));
         assert!(sql.contains(&format!(
-            "STRPOS(LOWER(CAST(\"eurl\" AS VARCHAR)), LOWER('{}')) > 0",
+            "STRPOS(LOWER(CAST(\"url\" AS VARCHAR)), LOWER('{}')) > 0",
             escaped_url
         )));
     }
@@ -684,10 +777,47 @@ mod tests {
         };
         let columns = req.columns.clone().expect("columns");
         let fields = FieldMap::default();
-        let sql = build_search_sql(&columns, &req, &fields, Path::new("/tmp"), 50);
+        let src =
+            "read_parquet(['/tmp/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)";
+        let sql = build_search_sql(&columns, &req, &fields, src, 50);
 
         assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('1.1.1.1')"));
         assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('8.8.8.8')"));
         assert!(sql.contains(" OR "));
+    }
+
+    #[test]
+    fn parquet_files_for_range_only_includes_overlapping_hours() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("nss-quarry-range-test-{unique}"));
+        let h00 = root.join("dt=2026-04-01").join("hour=00");
+        let h01 = root.join("dt=2026-04-01").join("hour=01");
+        let h02 = root.join("dt=2026-04-01").join("hour=02");
+
+        std::fs::create_dir_all(&h00).expect("mkdir h00");
+        std::fs::create_dir_all(&h01).expect("mkdir h01");
+        std::fs::create_dir_all(&h02).expect("mkdir h02");
+        std::fs::write(h00.join("part-000001.parquet"), b"").expect("touch h00 parquet");
+        std::fs::write(h01.join("part-000001.parquet"), b"").expect("touch h01 parquet");
+        std::fs::write(h02.join("part-000001.parquet"), b"").expect("touch h02 parquet");
+
+        let from = Utc.with_ymd_and_hms(2026, 4, 1, 0, 30, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 4, 1, 1, 5, 0).unwrap();
+        let files = parquet_files_for_range(&root, from, to).expect("range files");
+
+        assert_eq!(files.len(), 2);
+        let joined = files
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(joined.contains("hour=00/part-000001.parquet"));
+        assert!(joined.contains("hour=01/part-000001.parquet"));
+        assert!(!joined.contains("hour=02/part-000001.parquet"));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
     }
 }

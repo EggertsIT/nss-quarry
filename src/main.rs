@@ -2,6 +2,7 @@ mod audit;
 mod auth;
 mod config;
 mod models;
+mod pcap;
 mod query;
 mod webui;
 
@@ -11,7 +12,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, SaltString, rand_core::OsRng};
-use axum::extract::{Path, Query, State};
+use axum::extract::{Multipart, Path, Query, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -27,8 +28,10 @@ use crate::auth::{AuthManager, has_min_role};
 use crate::config::{AppConfig, AuthMode, RoleName};
 use crate::models::{
     AuditEvent, AuditListResponse, AuthResponse, HealthResponse, LocalLoginRequest,
-    ParquetColumnInfo, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
+    ParquetColumnInfo, PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse,
+    SearchRequest,
 };
+use crate::pcap::analyze_pcap_bytes;
 use crate::query::QueryService;
 use crate::webui::render_dashboard_html;
 
@@ -142,6 +145,7 @@ fn build_router(state: AppState) -> Router {
         .route("/authz/ingestor", get(authz_ingestor))
         .route("/api/search", post(api_search))
         .route("/api/export/csv", post(api_export_csv))
+        .route("/api/pcap/analyze", post(api_pcap_analyze))
         .route("/api/dashboards/{name}", get(api_dashboard))
         .route("/api/schema", get(api_schema))
         .route("/api/audit", get(api_audit))
@@ -352,6 +356,95 @@ async fn api_export_csv(
         HeaderValue::from_static("attachment; filename=\"nss-quarry-export.csv\""),
     );
     Ok(res)
+}
+
+const MAX_PCAP_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+const DEFAULT_PCAP_MAX_IPS: usize = 500;
+const MAX_PCAP_MAX_IPS: usize = 5000;
+
+async fn api_pcap_analyze(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    mut multipart: Multipart,
+) -> Result<Json<PcapAnalyzeResponse>, AppError> {
+    let user = require_user(&state, &jar, RoleName::Helpdesk).await?;
+    let mut file_name: Option<String> = None;
+    let mut pcap_bytes: Option<Vec<u8>> = None;
+    let mut max_ips = DEFAULT_PCAP_MAX_IPS;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(AppError::bad_request)?
+    {
+        let field_name = field.name().unwrap_or_default().to_string();
+        match field_name.as_str() {
+            "pcap" => {
+                file_name = field.file_name().map(|v| v.to_string());
+                let bytes = field.bytes().await.map_err(AppError::bad_request)?;
+                if bytes.len() > MAX_PCAP_UPLOAD_BYTES {
+                    return Err(AppError::bad_request(format!(
+                        "pcap is too large (max {} bytes)",
+                        MAX_PCAP_UPLOAD_BYTES
+                    )));
+                }
+                pcap_bytes = Some(bytes.to_vec());
+            }
+            "max_ips" => {
+                let value = field.text().await.map_err(AppError::bad_request)?;
+                if let Ok(parsed) = value.trim().parse::<usize>() {
+                    max_ips = parsed.clamp(1, MAX_PCAP_MAX_IPS);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let pcap_bytes =
+        pcap_bytes.ok_or_else(|| AppError::bad_request("multipart field 'pcap' is required"))?;
+    let summary = tokio::task::spawn_blocking(move || analyze_pcap_bytes(&pcap_bytes, max_ips))
+        .await
+        .map_err(AppError::internal)?
+        .map_err(AppError::bad_request)?;
+    let duration_seconds = (summary.time_to - summary.time_from).num_seconds().max(0);
+
+    let response = PcapAnalyzeResponse {
+        file_name: file_name.clone(),
+        link_type: summary.link_type,
+        time_from: summary.time_from,
+        time_to: summary.time_to,
+        duration_seconds,
+        packet_count: summary.packet_count,
+        ip_packet_count: summary.ip_packet_count,
+        unique_destination_ip_count: summary.unique_destination_ip_count,
+        destination_ips: summary.destination_ips,
+        truncated_ips: summary.truncated_ips,
+    };
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.pcap_analyze".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "file_name": file_name,
+                "link_type": response.link_type,
+                "time_from": response.time_from,
+                "time_to": response.time_to,
+                "duration_seconds": response.duration_seconds,
+                "packet_count": response.packet_count,
+                "ip_packet_count": response.ip_packet_count,
+                "unique_destination_ip_count": response.unique_destination_ip_count,
+                "returned_destination_ips": response.destination_ips.len(),
+                "truncated_ips": response.truncated_ips,
+            }),
+        })
+        .await;
+
+    Ok(Json(response))
 }
 
 async fn api_dashboard(
