@@ -2578,47 +2578,27 @@
         resetSupportSummary("Provide a valid search window to generate a support summary.");
         return;
       }
+      const displayColumns = resolveSearchDisplayColumns(req);
+      const queryReq = buildSearchQueryRequest(req, displayColumns);
       const renderToken = ++latestSearchRenderToken;
       const startedAt = performance.now();
-      const result = await apiFetch("/api/search", { method: "POST", body: req });
+      const result = await apiFetch("/api/search", { method: "POST", body: queryReq });
       const fetchMs = performance.now() - startedAt;
       const renderStartedAt = performance.now();
-      renderSearchResult(result, renderToken, { fetchMs });
+      renderSearchResult(result, renderToken, { fetchMs }, displayColumns);
       const renderMs = performance.now() - renderStartedAt;
       setMessageTone(
         "search-msg",
         `Search API ${fetchMs.toFixed(0)} ms | table render ${renderMs.toFixed(0)} ms | background visuals continue asynchronously.`,
         "info"
       );
-      void refreshSearchEnhancements(req, result, renderToken);
+      void refreshSearchEnhancements(result, renderToken);
     }
 
-    async function refreshSearchEnhancements(req, result, renderToken) {
+    async function refreshSearchEnhancements(result, renderToken) {
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       if (renderToken !== latestSearchRenderToken) return;
-      let rows = Array.isArray(result?.rows) ? result.rows : [];
-      if (rows.length > 0) {
-        const requiredCols = requiredEnhancementColumns();
-        const missingCols = missingRowColumns(rows, requiredCols);
-        if (missingCols.length > 0) {
-          try {
-            const enhancementReq = {
-              ...req,
-              columns: requiredCols,
-            };
-            const enhancementResult = await apiFetch("/api/search", {
-              method: "POST",
-              body: enhancementReq,
-            });
-            if (renderToken !== latestSearchRenderToken) return;
-            if (Array.isArray(enhancementResult?.rows)) {
-              rows = enhancementResult.rows;
-            }
-          } catch (err) {
-            console.warn("search enhancement fetch failed", err);
-          }
-        }
-      }
+      const rows = Array.isArray(result?.rows) ? result.rows : [];
       renderSearchInsights(rows);
       if (renderToken !== latestSearchRenderToken) return;
       try {
@@ -2636,6 +2616,44 @@
       } catch (err) {
         console.warn("search sankey render failed", err);
       }
+    }
+
+    function resolveSearchDisplayColumns(req) {
+      if (Array.isArray(req.columns) && req.columns.length > 0) {
+        return req.columns.slice();
+      }
+      if (latestSchema && Array.isArray(latestSchema.default_columns) && latestSchema.default_columns.length > 0) {
+        return latestSchema.default_columns.map((col) => String(col).trim()).filter((col) => col.length > 0);
+      }
+      return null;
+    }
+
+    function buildSearchQueryRequest(req, displayColumns) {
+      if (!Array.isArray(displayColumns) || displayColumns.length === 0) {
+        return req;
+      }
+      const extras = availableEnhancementColumns(displayColumns);
+      if (extras.length === 0) {
+        return { ...req, columns: displayColumns.slice() };
+      }
+      return { ...req, columns: [...displayColumns, ...extras] };
+    }
+
+    function availableEnhancementColumns(existingColumns) {
+      if (!latestSchema || !Array.isArray(latestSchema.parquet_columns)) {
+        return [];
+      }
+      const lowerExisting = new Set(existingColumns.map((c) => String(c).toLowerCase()));
+      const available = new Set(
+        latestSchema.parquet_columns
+          .map((col) => (col && col.name ? String(col.name).trim().toLowerCase() : ""))
+          .filter((name) => name.length > 0)
+      );
+      return requiredEnhancementColumns()
+        .filter((col) => {
+          const key = String(col).toLowerCase();
+          return available.has(key) && !lowerExisting.has(key);
+        });
     }
 
     function mappedFieldName(key, fallback) {
@@ -2658,12 +2676,6 @@
         mappedFieldName("url_field", "url"),
       ];
       return Array.from(new Set(values.map((v) => String(v || "").trim()).filter((v) => v.length > 0)));
-    }
-
-    function missingRowColumns(rows, requiredColumns) {
-      if (!Array.isArray(rows) || rows.length === 0) return requiredColumns.slice();
-      const first = rows[0] || {};
-      return requiredColumns.filter((col) => !Object.prototype.hasOwnProperty.call(first, col));
     }
 
     async function renderSearchFlowMap(rows) {
@@ -3065,7 +3077,7 @@
       }
     }
 
-    function renderSearchResult(result, renderToken, metrics = null) {
+    function renderSearchResult(result, renderToken, metrics = null, displayColumns = null) {
       const rows = result.rows || [];
       const parts = [
         `Rows: ${result.row_count}`,
@@ -3089,7 +3101,14 @@
         }
         return;
       }
-      const columns = Object.keys(rows[0]);
+      const presentColumns = Object.keys(rows[0]);
+      let columns = presentColumns;
+      if (Array.isArray(displayColumns) && displayColumns.length > 0) {
+        const preferred = displayColumns.filter((col) => Object.prototype.hasOwnProperty.call(rows[0], col));
+        if (preferred.length > 0) {
+          columns = preferred;
+        }
+      }
       const raw = rows.map(r => columns.map(c => r[c] == null ? "" : String(r[c])));
       host.appendChild(buildTable(columns, raw, {
         tableClass: "results-table",
@@ -3161,7 +3180,7 @@
       const to = new Date(payload.search_time_to || payload.time_to);
       $("time-from").value = toLocalInputValue(from);
       $("time-to").value = toLocalInputValue(to);
-      $("f-ip").value = Array.isArray(payload.source_ips) ? payload.source_ips.join(", ") : "";
+      $("f-ip").value = "";
       $("f-sip").value = Array.isArray(payload.destination_ips) ? payload.destination_ips.join(", ") : "";
 
       const padSeconds = Number(payload.search_window_pad_seconds || 0);
