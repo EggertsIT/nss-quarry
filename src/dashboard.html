@@ -477,6 +477,34 @@
       margin: 0 0 8px 0;
       font-size: 0.9rem;
     }
+    .search-result-tables-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      margin-top: 12px;
+    }
+    .search-result-table-card {
+      border: 1px solid rgba(188, 209, 232, 0.92);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(253, 254, 255, 0.96), rgba(245, 249, 255, 0.94));
+      padding: 12px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      min-width: 0;
+    }
+    .search-result-table-card h4 {
+      margin: 0 0 8px 0;
+      font-size: 0.88rem;
+      letter-spacing: 0.02em;
+      color: var(--navy);
+    }
+    .search-result-table-card .table-wrap {
+      max-height: 300px;
+    }
+    .search-result-table-note {
+      padding: 10px;
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
     .insight-list {
       display: flex;
       flex-direction: column;
@@ -1213,6 +1241,24 @@
         </div>
         <div class="muted" id="result-meta"></div>
         <div id="results" class="table-wrap results-table-wrap" style="margin-top: 8px;"></div>
+        <div id="search-result-tables" class="search-result-tables-grid">
+          <div class="search-result-table-card">
+            <h4>Response Codes</h4>
+            <div id="search-table-respcode" class="table-wrap"></div>
+          </div>
+          <div class="search-result-table-card">
+            <h4>Destinations With <code>respsize=0</code></h4>
+            <div id="search-table-zero-respsize" class="table-wrap"></div>
+          </div>
+          <div class="search-result-table-card">
+            <h4>Policy Reasons</h4>
+            <div id="search-table-reasons" class="table-wrap"></div>
+          </div>
+          <div class="search-result-table-card">
+            <h4>Country Flow Pairs</h4>
+            <div id="search-table-country-flow" class="table-wrap"></div>
+          </div>
+        </div>
       </div>
       </div>
 
@@ -3149,6 +3195,124 @@
       }
     }
 
+    function setSearchResultTableMessage(hostId, message) {
+      const host = $(hostId);
+      host.innerHTML = "";
+      const note = document.createElement("div");
+      note.className = "search-result-table-note";
+      note.textContent = message;
+      host.appendChild(note);
+    }
+
+    function renderSearchResultTables(rows) {
+      const respHostId = "search-table-respcode";
+      const zeroHostId = "search-table-zero-respsize";
+      const reasonHostId = "search-table-reasons";
+      const flowHostId = "search-table-country-flow";
+
+      if (!Array.isArray(rows) || rows.length === 0) {
+        setSearchResultTableMessage(respHostId, "No rows to summarize.");
+        setSearchResultTableMessage(zeroHostId, "No rows to summarize.");
+        setSearchResultTableMessage(reasonHostId, "No rows to summarize.");
+        setSearchResultTableMessage(flowHostId, "No rows to summarize.");
+        return;
+      }
+
+      const respCodeCol = firstPresentColumn(rows, ["respcode", "response_code", "status", "status_code"]);
+      const respSizeCol = firstPresentColumn(rows, ["respsize", "resp_size", "response_size"]);
+      const sipCol = firstPresentColumn(rows, ["sip", "server_ip", "destination_ip"]);
+      const hostCol = firstPresentColumn(rows, ["host", "hostname"]);
+      const urlCol = firstPresentColumn(rows, ["url"]);
+      const reasonCol = firstPresentColumn(rows, ["reason", "policy_reason"]);
+      const srcCountryCol = firstPresentColumn(rows, ["srcip_country", "source_country"]);
+      const dstCountryCol = firstPresentColumn(rows, ["dstip_country", "destination_country"]);
+
+      const respHost = $(respHostId);
+      respHost.innerHTML = "";
+      if (!respCodeCol) {
+        setSearchResultTableMessage(respHostId, "Column missing: respcode");
+      } else {
+        const counts = new Map();
+        for (const row of rows) {
+          const key = String(row[respCodeCol] ?? "").trim() || "None";
+          counts.set(key, (counts.get(key) || 0) + 1);
+        }
+        const tableRows = Array.from(counts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([code, count]) => [code, String(count)]);
+        respHost.appendChild(buildTable(["response_code", "count"], tableRows));
+      }
+
+      const zeroHost = $(zeroHostId);
+      zeroHost.innerHTML = "";
+      if (!respSizeCol) {
+        setSearchResultTableMessage(zeroHostId, "Column missing: respsize");
+      } else {
+        const zeroCounts = new Map();
+        for (const row of rows) {
+          const respSize = parseNumber(row[respSizeCol]);
+          if (respSize !== 0) continue;
+          const destination = String(row[sipCol] ?? row[hostCol] ?? row[urlCol] ?? "Unknown destination").trim() || "Unknown destination";
+          zeroCounts.set(destination, (zeroCounts.get(destination) || 0) + 1);
+        }
+        if (zeroCounts.size === 0) {
+          setSearchResultTableMessage(zeroHostId, "No destinations with respsize=0.");
+        } else {
+          const tableRows = Array.from(zeroCounts.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 25)
+            .map(([destination, count]) => [destination, String(count)]);
+          zeroHost.appendChild(buildTable(["destination", "count"], tableRows));
+        }
+      }
+
+      const reasonHost = $(reasonHostId);
+      reasonHost.innerHTML = "";
+      if (!reasonCol) {
+        setSearchResultTableMessage(reasonHostId, "Column missing: reason");
+      } else {
+        const counts = new Map();
+        for (const row of rows) {
+          const reason = String(row[reasonCol] ?? "").trim() || "None";
+          counts.set(reason, (counts.get(reason) || 0) + 1);
+        }
+        const tableRows = Array.from(counts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([reason, count]) => {
+            const hint = reasonHintFromPolicyReason(reason);
+            return [reason, String(count), hint.severity.toUpperCase(), hint.hint];
+          });
+        reasonHost.appendChild(buildTable(["policy_reason", "count", "severity", "hint"], tableRows));
+      }
+
+      const flowHost = $(flowHostId);
+      flowHost.innerHTML = "";
+      if (!srcCountryCol || !dstCountryCol) {
+        setSearchResultTableMessage(
+          flowHostId,
+          "Columns missing: srcip_country and/or dstip_country"
+        );
+      } else {
+        const pairCounts = new Map();
+        for (const row of rows) {
+          const source = String(row[srcCountryCol] ?? "").trim() || "Unknown";
+          const destination = String(row[dstCountryCol] ?? "").trim() || "Unknown";
+          const key = `${source}||${destination}`;
+          pairCounts.set(key, (pairCounts.get(key) || 0) + 1);
+        }
+        const tableRows = Array.from(pairCounts.entries())
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 25)
+          .map(([pair, count]) => {
+            const [source, destination] = pair.split("||");
+            return [source, destination, String(count)];
+          });
+        flowHost.appendChild(buildTable(["source_country", "destination_country", "count"], tableRows));
+      }
+    }
+
     function renderSearchResult(result, renderToken, metrics = null, displayColumns = null) {
       const rows = result.rows || [];
       const parts = [
@@ -3163,6 +3327,7 @@
       host.innerHTML = "";
       if (rows.length === 0) {
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
+        renderSearchResultTables([]);
         if (renderToken === latestSearchRenderToken) {
           renderSearchInsights([]);
           void renderSearchFlowMap([]);
@@ -3186,6 +3351,7 @@
         tableClass: "results-table",
         stickyColumns: ["time", "action"],
       }));
+      renderSearchResultTables(rows);
       if (renderToken === latestSearchRenderToken) {
         resetSupportSummary("Search results are ready. Generate a support summary on demand for the current search.");
       }
