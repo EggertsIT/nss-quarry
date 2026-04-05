@@ -2575,7 +2575,6 @@ fn find_any_parquet(root: &Path) -> Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use chrono::TimeZone;
@@ -2892,14 +2891,11 @@ mod tests {
     }
 
     fn test_query_service() -> QueryService {
-        static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("time")
-            .as_nanos()
-            .to_string();
-        let seq = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("nss-quarry-analytics-test-{unique}-{seq}"));
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("nss-quarry-analytics-test-{unique}"));
         std::fs::create_dir_all(root.join("parquet")).expect("mkdir parquet");
         std::fs::create_dir_all(root.join("analytics-cache")).expect("mkdir analytics");
         let mut cfg = AppConfig::default();

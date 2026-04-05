@@ -2634,6 +2634,13 @@
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
         req.columns = rawCols.split(",").map(v => v.trim()).filter(v => v.length > 0);
+      } else if (latestSchema && Array.isArray(latestSchema.parquet_columns)) {
+        const cols = latestSchema.parquet_columns
+          .map(c => c && c.name ? String(c.name).trim() : "")
+          .filter(c => c.length > 0);
+        if (cols.length > 0) {
+          req.columns = cols;
+        }
       }
       latestSearchRequest = req;
       return req;
@@ -2648,6 +2655,7 @@
         return;
       }
       const renderToken = ++latestSearchRenderToken;
+      setMessage("support-summary-msg", "Refreshing support summary...");
       const result = await apiFetch("/api/search", { method: "POST", body: req });
       renderSearchResult(result, renderToken);
       void refreshSearchEnhancements(req, result, renderToken);
