@@ -458,7 +458,7 @@
       margin-right: calc(50% - 50vw + 20px);
     }
     .results-table-wrap {
-      max-height: 72vh;
+      max-height: none;
     }
     .insights-grid {
       display: grid;
@@ -498,7 +498,7 @@
       color: var(--navy);
     }
     .search-result-table-card .table-wrap {
-      max-height: 300px;
+      max-height: none;
     }
     .search-result-table-note {
       padding: 10px;
@@ -683,7 +683,7 @@
         margin-right: 0;
       }
       .results-table-wrap {
-        max-height: 64vh;
+        max-height: none;
       }
       .form-grid .field-wide {
         grid-column: span 1;
@@ -3239,7 +3239,6 @@
         }
         const tableRows = Array.from(counts.entries())
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 20)
           .map(([code, count]) => [code, String(count)]);
         respHost.appendChild(buildTable(["response_code", "count"], tableRows));
       }
@@ -3261,7 +3260,6 @@
         } else {
           const tableRows = Array.from(zeroCounts.entries())
             .sort((a, b) => b[1] - a[1])
-            .slice(0, 25)
             .map(([destination, count]) => [destination, String(count)]);
           zeroHost.appendChild(buildTable(["destination", "count"], tableRows));
         }
@@ -3279,7 +3277,6 @@
         }
         const tableRows = Array.from(counts.entries())
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 20)
           .map(([reason, count]) => {
             const hint = reasonHintFromPolicyReason(reason);
             return [reason, String(count), hint.severity.toUpperCase(), hint.hint];
@@ -3304,7 +3301,6 @@
         }
         const tableRows = Array.from(pairCounts.entries())
           .sort((a, b) => b[1] - a[1])
-          .slice(0, 25)
           .map(([pair, count]) => {
             const [source, destination] = pair.split("||");
             return [source, destination, String(count)];
@@ -3343,7 +3339,9 @@
       if (Array.isArray(displayColumns) && displayColumns.length > 0) {
         const preferred = displayColumns.filter((col) => Object.prototype.hasOwnProperty.call(rows[0], col));
         if (preferred.length > 0) {
-          columns = preferred;
+          const already = new Set(preferred.map((c) => String(c)));
+          const remaining = presentColumns.filter((col) => !already.has(String(col)));
+          columns = [...preferred, ...remaining];
         }
       }
       const raw = rows.map(r => columns.map(c => r[c] == null ? "" : String(r[c])));
