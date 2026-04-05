@@ -329,6 +329,25 @@
       max-height: 320px;
       background: rgba(255, 255, 255, 0.96);
     }
+    .top-map-card {
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background:
+        radial-gradient(320px 140px at 100% -10%, rgba(31, 120, 216, 0.1), transparent 70%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(243, 248, 255, 0.92));
+    }
+    .top-map-card .network-map-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .top-map-card .map-canvas {
+      min-height: 320px;
+    }
+    .top-map-card .map-caption {
+      margin-top: 0;
+    }
     .tables-shell {
       padding: 18px;
       background:
@@ -812,22 +831,22 @@
         </div>
       </div>
 
-      <div class="panel map-panel" style="margin-top: 14px;">
-        <h3>Global Country Flow Map (24h)</h3>
-        <div class="network-map-wrap">
-          <div class="map-controls">
-            <button id="flow-map-zoom-in" type="button" class="ghost" title="Zoom in">+</button>
-            <button id="flow-map-zoom-out" type="button" class="ghost" title="Zoom out">-</button>
-            <button id="flow-map-zoom-reset" type="button" class="ghost" title="Reset zoom">Reset</button>
-          </div>
-          <div class="map-canvas" id="flow-map-wrap"></div>
-        </div>
-        <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
-      </div>
-
       <div class="panel panel-full-bleed tables-shell" style="margin-top: 14px;">
         <h3>Top Tables</h3>
-        <div id="top-tables" class="top-tables-grid"></div>
+        <div id="top-tables" class="top-tables-grid">
+          <div id="overview-flow-map-card" class="top-table-card top-map-card">
+            <h3>Global Country Flow Map (24h)</h3>
+            <div class="network-map-wrap">
+              <div class="map-controls">
+                <button id="flow-map-zoom-in" type="button" class="ghost" title="Zoom in">+</button>
+                <button id="flow-map-zoom-out" type="button" class="ghost" title="Zoom out">-</button>
+                <button id="flow-map-zoom-reset" type="button" class="ghost" title="Reset zoom">Reset</button>
+              </div>
+              <div class="map-canvas" id="flow-map-wrap"></div>
+            </div>
+            <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
+          </div>
+        </div>
       </div>
       </div>
 
@@ -1487,11 +1506,13 @@
 
     function renderTopTables(tables) {
       const host = $("top-tables");
-      host.innerHTML = "";
-      if (!tables || tables.length === 0) {
-        host.innerHTML = "<div class='muted'>No aggregate tables returned.</div>";
-        return;
+      const mapCard = $("overview-flow-map-card");
+      if (mapCard) {
+        host.replaceChildren(mapCard);
+      } else {
+        host.innerHTML = "";
       }
+      if (!tables || tables.length === 0) return;
       for (const table of tables.filter(t => t && t.name !== "country_flows_24h")) {
         const block = document.createElement("div");
         block.className = "top-table-card";
