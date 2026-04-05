@@ -26,7 +26,6 @@ Production/commercial use requires a paid monthly commercial subscription from t
   - `local_users` (small environments)
 - Optional API-token auth for backend automation and integrations.
 - Admin-managed API tokens with source allowlists and runtime revocation.
-- ServiceNow MID-friendly asynchronous investigation APIs with durable job state.
 - Full audit log of auth/query/export/admin actions.
 - Health probes: `/healthz`, `/readyz`.
 
@@ -90,7 +89,7 @@ Do not use `--demo-users` in production.
 
 See full details:
 - `docs/install-https.md`
-- `docs/servicenow-integration.md`
+- `docs/servicenow-integration.md` (experimental ServiceNow workflow design)
 
 ## Uninstall
 
@@ -125,10 +124,6 @@ cp config.example.toml config.toml
 - ingestor control settings:
   - `ingestor.base_url` (default `http://127.0.0.1:9090`)
   - `ingestor.request_timeout_ms` (default `5000`)
-- integration job settings:
-  - `integration.job_ttl_hours` (default `24`)
-  - `integration.cleanup_interval_secs` (default `600`)
-  - `integration.max_csv_export_bytes` (default `5000000`)
 - for production OIDC with Microsoft Entra ID or Okta, follow the dedicated guide:
   - `docs/oidc-setup.md`
 - optional audit retention/rotation:
@@ -185,7 +180,7 @@ cargo run -- run --config ./config.toml
 
 Full API reference with Python examples:
 - `docs/api.md`
-- `docs/servicenow-integration.md`
+- `docs/servicenow-integration.md` (experimental ServiceNow integration pattern)
 
 - `GET /healthz`
 - `GET /readyz`
@@ -196,10 +191,6 @@ Full API reference with Python examples:
 - `GET /api/me`
 - `POST /api/search`
 - `POST /api/export/csv`
-- `POST /api/integrations/servicenow/investigations`
-- `GET /api/integrations/servicenow/jobs/{job_id}`
-- `GET /api/integrations/servicenow/jobs/{job_id}/result`
-- `GET /api/integrations/servicenow/jobs/{job_id}/export.csv?token=...`
 - `POST /api/pcap/analyze` (multipart upload: `pcap` file + optional `max_ips`)
 - `GET /api/dashboards/{name}` (`?refresh=delta` supported for manual current-window refresh)
 - `GET /api/audit` (admin only, server-side pagination and filtering)

@@ -13,7 +13,6 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub data: DataConfig,
     pub ingestor: IngestorConfig,
-    pub integration: IntegrationConfig,
     pub auth: AuthConfig,
     pub security: SecurityConfig,
     pub query: QueryConfig,
@@ -63,12 +62,6 @@ impl AppConfig {
         }
         if self.ingestor.request_timeout_ms < 500 {
             anyhow::bail!("ingestor.request_timeout_ms must be >= 500");
-        }
-        if self.integration.job_ttl_hours == 0 {
-            anyhow::bail!("integration.job_ttl_hours must be > 0");
-        }
-        if self.integration.cleanup_interval_secs == 0 {
-            anyhow::bail!("integration.cleanup_interval_secs must be > 0");
         }
         if self.auth.session_ttl_minutes == 0 {
             anyhow::bail!("auth.session_ttl_minutes must be > 0");
@@ -215,24 +208,6 @@ impl Default for IngestorConfig {
         Self {
             base_url: "http://127.0.0.1:9090".to_string(),
             request_timeout_ms: 5000,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct IntegrationConfig {
-    pub job_ttl_hours: u64,
-    pub cleanup_interval_secs: u64,
-    pub max_csv_export_bytes: usize,
-}
-
-impl Default for IntegrationConfig {
-    fn default() -> Self {
-        Self {
-            job_ttl_hours: 24,
-            cleanup_interval_secs: 600,
-            max_csv_export_bytes: 5_000_000,
         }
     }
 }

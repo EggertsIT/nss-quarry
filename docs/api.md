@@ -161,10 +161,6 @@ Typical error status codes:
 | `POST` | `/api/search` | `helpdesk+` | search logs |
 | `POST` | `/api/summary/support` | `helpdesk+` | generate a structured support summary from a bounded search |
 | `POST` | `/api/export/csv` | `helpdesk+` | export search results as CSV |
-| `POST` | `/api/integrations/servicenow/investigations` | `analyst+` API token | submit async ServiceNow investigation |
-| `GET` | `/api/integrations/servicenow/jobs/{job_id}` | `analyst+` API token | check ServiceNow investigation status |
-| `GET` | `/api/integrations/servicenow/jobs/{job_id}/result` | `analyst+` API token | fetch completed ServiceNow investigation result |
-| `GET` | `/api/integrations/servicenow/jobs/{job_id}/export.csv?token=...` | `analyst+` API token | fetch optional CSV evidence for completed jobs |
 | `POST` | `/api/pcap/analyze` | `helpdesk+` | analyze `.pcap` or `.pcapng` |
 | `GET` | `/api/dashboards/{name}` | `helpdesk+` | 24h dashboard aggregate payload |
 | `GET` | `/api/schema` | `helpdesk+` | schema mapping and detected parquet columns |
@@ -539,55 +535,6 @@ print("saved", len(response.content), "bytes")
 Response headers:
 - `Content-Type: text/csv; charset=utf-8`
 - `Content-Disposition: attachment; filename="nss-quarry-export.csv"`
-
-### ServiceNow Integration APIs
-
-These endpoints are intended for ServiceNow MID-backed automation. They require:
-- API-token authentication (`Authorization: Bearer <token>` or `X-API-Token`)
-- minimum role `analyst`
-
-### `POST /api/integrations/servicenow/investigations`
-
-Submits an asynchronous investigation job.
-
-Request body:
-
-```json
-{
-  "case_id": "INC0012345",
-  "request_id": "REQ-2026-04-05-01",
-  "include_csv": true,
-  "search": {
-    "time_from": "2026-04-05T10:00:00Z",
-    "time_to": "2026-04-05T11:00:00Z",
-    "filters": {
-      "server_ip": "8.8.8.8,1.1.1.1"
-    },
-    "limit": 500
-  }
-}
-```
-
-Notes:
-- `request_id` is optional, but if provided it enables idempotent deduplication for the same `case_id`.
-- job result retention follows `integration.job_ttl_hours`.
-
-Response status:
-- `202 Accepted`
-
-### `GET /api/integrations/servicenow/jobs/{job_id}`
-
-Returns lifecycle metadata (`queued`, `running`, `completed`, `failed`, `expired`) and whether a result is available.
-
-### `GET /api/integrations/servicenow/jobs/{job_id}/result`
-
-Returns:
-- `200` with structured investigation result when complete
-- `409` while the job is still running or queued
-
-### `GET /api/integrations/servicenow/jobs/{job_id}/export.csv?token=...`
-
-Downloads optional CSV evidence for completed jobs when `include_csv=true` and the provided export token matches.
 
 ### `POST /api/pcap/analyze`
 

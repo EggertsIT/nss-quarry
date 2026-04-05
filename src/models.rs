@@ -88,7 +88,7 @@ pub enum SupportClassification {
     InsufficientEvidence,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SupportSummaryItem {
     pub value: String,
     pub count: usize,
@@ -96,7 +96,7 @@ pub struct SupportSummaryItem {
     pub severity: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SupportFinding {
     pub title: String,
     pub severity: String,
@@ -105,7 +105,7 @@ pub struct SupportFinding {
     pub examples: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SupportSummaryResponse {
     pub generated_at: DateTime<Utc>,
     pub time_from: DateTime<Utc>,
@@ -301,105 +301,4 @@ pub struct ApiTokenUpdateRequest {
     #[serde(default)]
     pub allowed_sources: Vec<String>,
     pub disabled: bool,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ServiceNowJobState {
-    Queued,
-    Running,
-    Completed,
-    Failed,
-    Expired,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowInvestigationSubmitRequest {
-    pub case_id: String,
-    #[serde(default)]
-    pub request_id: Option<String>,
-    pub search: SearchRequest,
-    #[serde(default)]
-    pub pcap_context: Option<SupportSummaryPcapContext>,
-    #[serde(default)]
-    pub include_csv: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowCsvExportRef {
-    pub url: String,
-    pub token: String,
-    pub expires_at: DateTime<Utc>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowInvestigationResult {
-    pub schema_version: String,
-    pub job_id: String,
-    pub case_id: String,
-    #[serde(default)]
-    pub request_id: Option<String>,
-    pub generated_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    pub time_from: DateTime<Utc>,
-    pub time_to: DateTime<Utc>,
-    pub row_count: usize,
-    pub truncated: bool,
-    pub overview: String,
-    pub issue_classification: Vec<SupportClassification>,
-    pub primary_findings: Vec<SupportFinding>,
-    pub top_signals: Vec<SupportSummaryItem>,
-    pub recommended_next_checks: Vec<String>,
-    pub missing_inputs: Vec<String>,
-    pub response_code_summary: Vec<SupportSummaryItem>,
-    pub policy_reason_summary: Vec<SupportSummaryItem>,
-    pub zero_response_destinations: Vec<SupportSummaryItem>,
-    pub tls_or_certificate_indicators: Vec<SupportSummaryItem>,
-    pub geo_indicators: Vec<SupportSummaryItem>,
-    pub threat_indicators: Vec<SupportSummaryItem>,
-    #[serde(default)]
-    pub csv_export: Option<ServiceNowCsvExportRef>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowInvestigationJobStatus {
-    pub schema_version: String,
-    pub job_id: String,
-    pub case_id: String,
-    #[serde(default)]
-    pub request_id: Option<String>,
-    pub status: ServiceNowJobState,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-    #[serde(default)]
-    pub started_at: Option<DateTime<Utc>>,
-    #[serde(default)]
-    pub finished_at: Option<DateTime<Utc>>,
-    pub result_available: bool,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowInvestigationSubmitResponse {
-    pub schema_version: String,
-    pub deduplicated: bool,
-    pub poll_url: String,
-    pub result_url: String,
-    pub job: ServiceNowInvestigationJobStatus,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowInvestigationJobResponse {
-    pub schema_version: String,
-    pub job: ServiceNowInvestigationJobStatus,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ServiceNowInvestigationResultResponse {
-    pub schema_version: String,
-    pub job: ServiceNowInvestigationJobStatus,
-    #[serde(default)]
-    pub result: Option<ServiceNowInvestigationResult>,
 }
