@@ -3109,7 +3109,7 @@
       const to = new Date(payload.search_time_to || payload.time_to);
       $("time-from").value = toLocalInputValue(from);
       $("time-to").value = toLocalInputValue(to);
-      $("f-ip").value = Array.isArray(payload.source_ips) ? payload.source_ips.join(", ") : "";
+      $("f-ip").value = "";
       $("f-sip").value = Array.isArray(payload.destination_ips) ? payload.destination_ips.join(", ") : "";
 
       const padSeconds = Number(payload.search_window_pad_seconds || 0);
@@ -3141,7 +3141,7 @@
         unique_source_ip_count: payload.unique_source_ip_count || null,
         unique_destination_ip_count: payload.unique_destination_ip_count || null,
       };
-      setMessage("pcap-msg", "PCAP analyzed and filters applied.", true);
+      setMessage("pcap-msg", "PCAP analyzed and time/SIP filters applied.", true);
       await runSearch();
     }
 
