@@ -788,8 +788,10 @@ async fn api_dashboard(
                     DashboardRefreshMode::Delta => "delta",
                 },
                 "dashboard_source": data.source,
+                "dashboard_status": data.status,
                 "snapshot_generated_at": data.snapshot_generated_at,
-                "data_window_to": data.data_window_to
+                "data_window_to": data.data_window_to,
+                "snapshot_age_seconds": data.snapshot_age_seconds
             }),
         })
         .await;

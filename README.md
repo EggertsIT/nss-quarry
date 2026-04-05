@@ -211,7 +211,7 @@ Dashboard behavior:
 - the main dashboard is served from a persisted hourly snapshot, not a live full 24-hour parquet scan on every page load
 - `query.dashboard_snapshot_refresh_secs` controls the hourly rebuild cadence
 - the browser `Refresh` button requests `?refresh=delta`, which merges newer finalized parquet data on top of the latest hourly snapshot when available
-- dashboard responses include freshness metadata such as `source`, `snapshot_generated_at`, `data_window_from`, `data_window_to`, `refresh_in_progress`, and `notes`
+- dashboard responses include explicit state and freshness metadata such as `status`, `source`, `snapshot_generated_at`, `snapshot_age_seconds`, `data_window_from`, `data_window_to`, `refresh_in_progress`, `last_refresh_attempt_at`, `last_refresh_success_at`, `last_refresh_error`, and `notes`
 
 `/api/audit` query parameters:
 - `page` (default `1`)

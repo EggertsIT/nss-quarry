@@ -582,11 +582,16 @@ Response includes:
   - `top_response_codes`
   - `country_flows_24h`
 - freshness metadata:
+  - `status` (`warming`, `ready`, `stale`, `degraded`)
   - `source`
   - `snapshot_generated_at`
+  - `snapshot_age_seconds`
   - `data_window_from`
   - `data_window_to`
   - `refresh_in_progress`
+  - `last_refresh_attempt_at`
+  - `last_refresh_success_at`
+  - `last_refresh_error`
   - `notes`
 
 ### `GET /api/schema`

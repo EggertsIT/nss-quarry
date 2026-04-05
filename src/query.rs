@@ -13,7 +13,8 @@ use tracing::{error, warn};
 
 use crate::config::{AppConfig, FieldMap, RoleName};
 use crate::models::{
-    DashboardResponse, MetricCard, SearchFilters, SearchRequest, SearchResponse, TableBlock,
+    DashboardResponse, DashboardStatus, MetricCard, SearchFilters, SearchRequest, SearchResponse,
+    TableBlock,
 };
 
 const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
@@ -75,6 +76,14 @@ struct DashboardAggregate {
     country_flows: BTreeMap<String, i64>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct DashboardRefreshState {
+    last_attempt_at: Option<DateTime<Utc>>,
+    last_success_at: Option<DateTime<Utc>>,
+    last_error_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+}
+
 struct QueryInner {
     parquet_root: PathBuf,
     fields: FieldMap,
@@ -85,6 +94,7 @@ struct QueryInner {
     dashboard_snapshot_cache: RwLock<HashMap<String, DashboardSnapshot>>,
     dashboard_snapshot_refresh_secs: u64,
     dashboard_refresh_in_progress: AtomicBool,
+    dashboard_refresh_state: RwLock<DashboardRefreshState>,
     input_value_re: Regex,
     max_days_per_query: i64,
     default_limit: u32,
@@ -107,6 +117,7 @@ impl QueryService {
                 dashboard_snapshot_cache: RwLock::new(HashMap::new()),
                 dashboard_snapshot_refresh_secs: cfg.query.dashboard_snapshot_refresh_secs,
                 dashboard_refresh_in_progress: AtomicBool::new(false),
+                dashboard_refresh_state: RwLock::new(DashboardRefreshState::default()),
                 input_value_re,
                 max_days_per_query: cfg.query.max_days_per_query,
                 default_limit: cfg.query.default_limit,
@@ -173,14 +184,28 @@ impl QueryService {
         let now = Utc::now();
         let Some(snapshot) = self.dashboard_snapshot_get(name)? else {
             self.spawn_dashboard_snapshot_refresh(name.to_string());
+            let refresh_state = self.dashboard_refresh_state_value();
+            let mut notes =
+                vec!["Dashboard snapshot is building. Refresh again shortly.".to_string()];
+            let (status, source) = if let Some(err) = refresh_state.last_error.clone() {
+                notes = vec![
+                    "Dashboard snapshot is currently unavailable. A background rebuild has been scheduled.".to_string(),
+                    format!("Last refresh error: {err}"),
+                ];
+                (DashboardStatus::Degraded, "snapshot_unavailable")
+            } else {
+                (DashboardStatus::Warming, "warming")
+            };
             return Ok(empty_dashboard_response(
                 name,
                 now,
-                "warming",
-                vec!["Dashboard snapshot is building. Refresh again shortly.".to_string()],
+                status,
+                source,
+                notes,
                 self.inner
                     .dashboard_refresh_in_progress
                     .load(Ordering::Relaxed),
+                refresh_state,
             ));
         };
 
@@ -192,8 +217,10 @@ impl QueryService {
             DashboardRefreshMode::Normal => Ok(self.render_dashboard_snapshot(
                 &snapshot,
                 role,
+                now,
                 "hourly_snapshot",
                 default_dashboard_notes(&snapshot, now, self.inner.dashboard_snapshot_refresh_secs),
+                None,
             )),
             DashboardRefreshMode::Delta => {
                 if snapshot_needs_full_rebuild_before_delta(
@@ -205,42 +232,50 @@ impl QueryService {
                     return Ok(self.render_dashboard_snapshot(
                         &snapshot,
                         role,
+                        now,
                         "hourly_snapshot",
                         vec![
                             "Current snapshot is too old for a safe delta refresh. A background hourly rebuild was started."
                                 .to_string(),
                         ],
+                        None,
                     ));
                 }
                 match self.refresh_dashboard_delta(name, &snapshot).await {
                     Ok(Some(delta_snapshot)) => Ok(self.render_dashboard_snapshot(
                         &delta_snapshot,
                         role,
+                        now,
                         "hourly_snapshot_plus_delta",
                         vec![
                             "Manual refresh merged finalized data newer than the hourly snapshot."
                                 .to_string(),
                         ],
+                        None,
                     )),
                     Ok(None) => Ok(self.render_dashboard_snapshot(
                         &snapshot,
                         role,
+                        now,
                         "hourly_snapshot",
                         vec![
                             "No newer finalized parquet data was available for delta refresh."
                                 .to_string(),
                         ],
+                        None,
                     )),
                     Err(err) => {
                         warn!(error = %err, "dashboard delta refresh failed");
                         Ok(self.render_dashboard_snapshot(
                             &snapshot,
                             role,
+                            now,
                             "hourly_snapshot",
                             vec![
                                 "Delta refresh failed. Showing the latest hourly snapshot."
                                     .to_string(),
                             ],
+                            Some(trim_dashboard_error_message(&err.to_string())),
                         ))
                     }
                 }
@@ -258,7 +293,19 @@ impl QueryService {
             return Ok(());
         }
 
-        let result = self.refresh_dashboard_snapshot_inner(name).await;
+        self.record_dashboard_refresh_attempt(Utc::now());
+        let result = self
+            .refresh_dashboard_snapshot_inner(name)
+            .await
+            .and_then(|snapshot| {
+                let generated_at = snapshot.generated_at;
+                self.dashboard_snapshot_put(snapshot)?;
+                self.record_dashboard_refresh_success(generated_at);
+                Ok(())
+            });
+        if let Err(err) = &result {
+            self.record_dashboard_refresh_failure(Utc::now(), err);
+        }
         self.inner
             .dashboard_refresh_in_progress
             .store(false, Ordering::SeqCst);
@@ -274,9 +321,20 @@ impl QueryService {
         {
             return;
         }
+        self.record_dashboard_refresh_attempt(Utc::now());
         let svc = self.clone();
         tokio::spawn(async move {
-            if let Err(err) = svc.refresh_dashboard_snapshot_inner(&name).await {
+            let result = svc
+                .refresh_dashboard_snapshot_inner(&name)
+                .await
+                .and_then(|snapshot| {
+                    let generated_at = snapshot.generated_at;
+                    svc.dashboard_snapshot_put(snapshot)?;
+                    svc.record_dashboard_refresh_success(generated_at);
+                    Ok(())
+                });
+            if let Err(err) = result {
+                svc.record_dashboard_refresh_failure(Utc::now(), &err);
                 error!(error = %err, dashboard = %name, "dashboard snapshot refresh failed");
             }
             svc.inner
@@ -305,15 +363,70 @@ impl QueryService {
         Ok(())
     }
 
-    async fn refresh_dashboard_snapshot_inner(&self, name: &str) -> Result<()> {
+    fn dashboard_refresh_state_value(&self) -> DashboardRefreshState {
+        match self
+            .inner
+            .dashboard_refresh_state
+            .read()
+            .map_err(|_| anyhow::anyhow!("dashboard refresh state lock poisoned"))
+        {
+            Ok(guard) => guard.clone(),
+            Err(err) => {
+                warn!(error = %err, "failed reading dashboard refresh state");
+                DashboardRefreshState::default()
+            }
+        }
+    }
+
+    fn mutate_dashboard_refresh_state<F>(&self, mutate: F) -> Result<()>
+    where
+        F: FnOnce(&mut DashboardRefreshState),
+    {
+        let mut guard = self
+            .inner
+            .dashboard_refresh_state
+            .write()
+            .map_err(|_| anyhow::anyhow!("dashboard refresh state lock poisoned"))?;
+        mutate(&mut guard);
+        Ok(())
+    }
+
+    fn record_dashboard_refresh_attempt(&self, at: DateTime<Utc>) {
+        if let Err(err) = self.mutate_dashboard_refresh_state(|state| {
+            state.last_attempt_at = Some(at);
+        }) {
+            warn!(error = %err, "failed recording dashboard refresh attempt");
+        }
+    }
+
+    fn record_dashboard_refresh_success(&self, at: DateTime<Utc>) {
+        if let Err(err) = self.mutate_dashboard_refresh_state(|state| {
+            state.last_success_at = Some(at);
+            state.last_error_at = None;
+            state.last_error = None;
+        }) {
+            warn!(error = %err, "failed recording dashboard refresh success");
+        }
+    }
+
+    fn record_dashboard_refresh_failure(&self, at: DateTime<Utc>, err: &anyhow::Error) {
+        let message = trim_dashboard_error_message(&err.to_string());
+        if let Err(lock_err) = self.mutate_dashboard_refresh_state(|state| {
+            state.last_error_at = Some(at);
+            state.last_error = Some(message.clone());
+        }) {
+            warn!(error = %lock_err, "failed recording dashboard refresh failure");
+        }
+    }
+
+    async fn refresh_dashboard_snapshot_inner(&self, name: &str) -> Result<DashboardSnapshot> {
         let svc = self.clone();
         let worker_name = name.to_string();
         let snapshot =
             tokio::task::spawn_blocking(move || svc.dashboard_full_snapshot_sync(&worker_name))
                 .await
                 .context("dashboard snapshot worker failed")??;
-        self.dashboard_snapshot_put(snapshot)?;
-        Ok(())
+        Ok(snapshot)
     }
 
     async fn refresh_dashboard_delta(
@@ -525,8 +638,10 @@ impl QueryService {
         &self,
         snapshot: &DashboardSnapshot,
         role: RoleName,
+        now: DateTime<Utc>,
         source: &str,
         notes: Vec<String>,
+        transient_error: Option<String>,
     ) -> DashboardResponse {
         let mut tables = vec![
             table_block_from_counts(
@@ -581,17 +696,35 @@ impl QueryService {
             }
         }
 
+        let refresh_state = self.dashboard_refresh_state_value();
+        let last_refresh_error = transient_error.or(refresh_state.last_error.clone());
+        let status = if last_refresh_error.is_some() {
+            DashboardStatus::Degraded
+        } else if snapshot_needs_refresh(snapshot, now, self.inner.dashboard_snapshot_refresh_secs)
+        {
+            DashboardStatus::Stale
+        } else {
+            DashboardStatus::Ready
+        };
+
         DashboardResponse {
             name: snapshot.name.clone(),
-            generated_at: Utc::now(),
+            generated_at: now,
+            status,
             source: source.to_string(),
             snapshot_generated_at: Some(snapshot.generated_at),
+            snapshot_age_seconds: Some(snapshot_age_seconds(snapshot, now)),
             data_window_from: Some(snapshot.data_window_from),
             data_window_to: Some(snapshot.data_window_to),
             refresh_in_progress: self
                 .inner
                 .dashboard_refresh_in_progress
                 .load(Ordering::Relaxed),
+            last_refresh_attempt_at: refresh_state.last_attempt_at,
+            last_refresh_success_at: refresh_state
+                .last_success_at
+                .or(Some(snapshot.generated_at)),
+            last_refresh_error,
             notes,
             cards: vec![
                 MetricCard {
@@ -899,18 +1032,25 @@ fn merged_counts(
 fn empty_dashboard_response(
     name: &str,
     generated_at: DateTime<Utc>,
+    status: DashboardStatus,
     source: &str,
     notes: Vec<String>,
     refresh_in_progress: bool,
+    refresh_state: DashboardRefreshState,
 ) -> DashboardResponse {
     DashboardResponse {
         name: name.to_string(),
         generated_at,
+        status,
         source: source.to_string(),
         snapshot_generated_at: None,
+        snapshot_age_seconds: None,
         data_window_from: None,
         data_window_to: None,
         refresh_in_progress,
+        last_refresh_attempt_at: refresh_state.last_attempt_at,
+        last_refresh_success_at: refresh_state.last_success_at,
+        last_refresh_error: refresh_state.last_error,
         notes,
         cards: vec![
             MetricCard {
@@ -948,6 +1088,12 @@ fn default_dashboard_notes(
         snapshot.data_window_from.format("%Y-%m-%d %H:%M"),
         snapshot.data_window_to.format("%Y-%m-%d %H:%M")
     )];
+    if snapshot.aggregate.is_empty() {
+        notes.push(
+            "No finalized parquet rows were available in the current 24-hour dashboard window."
+                .to_string(),
+        );
+    }
     if snapshot_needs_refresh(snapshot, now, refresh_secs) {
         notes.push("Snapshot is older than the normal hourly cadence. A background rebuild has been scheduled.".to_string());
     } else {
@@ -977,6 +1123,22 @@ fn snapshot_needs_full_rebuild_before_delta(
     let lag_hours = (floor_to_hour(now) - snapshot.data_window_to).num_hours();
     lag_hours > MAX_DASHBOARD_DELTA_RANGE_HOURS
         || (now - snapshot.generated_at).num_seconds() >= (refresh_secs as i64 * 2)
+}
+
+fn snapshot_age_seconds(snapshot: &DashboardSnapshot, now: DateTime<Utc>) -> i64 {
+    (now - snapshot.generated_at).num_seconds().max(0)
+}
+
+fn trim_dashboard_error_message(message: &str) -> String {
+    const MAX_LEN: usize = 240;
+    let mut out = String::new();
+    for ch in message.chars().take(MAX_LEN) {
+        out.push(ch);
+    }
+    if message.chars().count() > MAX_LEN {
+        out.push_str("...");
+    }
+    out
 }
 
 fn dashboard_snapshot_dir(cfg: &AppConfig) -> PathBuf {
@@ -1900,9 +2062,11 @@ mod tests {
         let response = empty_dashboard_response(
             "overview",
             generated_at,
+            DashboardStatus::Warming,
             "warming",
             vec!["building".to_string()],
             true,
+            DashboardRefreshState::default(),
         );
 
         assert!(
@@ -1911,5 +2075,42 @@ mod tests {
                 .iter()
                 .any(|table| table.name == "top_response_codes")
         );
+    }
+
+    #[test]
+    fn dashboard_status_is_ready_for_fresh_snapshot() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap();
+        let snapshot = DashboardSnapshot {
+            version: DASHBOARD_SNAPSHOT_VERSION,
+            name: "overview".to_string(),
+            generated_at: Utc.with_ymd_and_hms(2026, 4, 5, 11, 45, 0).unwrap(),
+            data_window_from: Utc.with_ymd_and_hms(2026, 4, 4, 11, 0, 0).unwrap(),
+            data_window_to: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
+            aggregate: DashboardAggregate::default(),
+        };
+        assert!(!snapshot_needs_refresh(&snapshot, now, 3600));
+        assert_eq!(snapshot_age_seconds(&snapshot, now), 900);
+    }
+
+    #[test]
+    fn dashboard_status_detects_stale_snapshot() {
+        let now = Utc.with_ymd_and_hms(2026, 4, 5, 14, 5, 0).unwrap();
+        let snapshot = DashboardSnapshot {
+            version: DASHBOARD_SNAPSHOT_VERSION,
+            name: "overview".to_string(),
+            generated_at: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
+            data_window_from: Utc.with_ymd_and_hms(2026, 4, 4, 12, 0, 0).unwrap(),
+            data_window_to: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
+            aggregate: DashboardAggregate::default(),
+        };
+        assert!(snapshot_needs_refresh(&snapshot, now, 3600));
+    }
+
+    #[test]
+    fn trim_dashboard_error_message_bounds_output() {
+        let msg = "x".repeat(300);
+        let trimmed = trim_dashboard_error_message(&msg);
+        assert!(trimmed.len() <= 243);
+        assert!(trimmed.ends_with("..."));
     }
 }

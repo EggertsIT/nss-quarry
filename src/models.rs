@@ -76,15 +76,29 @@ pub struct PcapAnalyzeResponse {
     pub truncated_ips: bool,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DashboardStatus {
+    Warming,
+    Ready,
+    Stale,
+    Degraded,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DashboardResponse {
     pub name: String,
     pub generated_at: DateTime<Utc>,
+    pub status: DashboardStatus,
     pub source: String,
     pub snapshot_generated_at: Option<DateTime<Utc>>,
+    pub snapshot_age_seconds: Option<i64>,
     pub data_window_from: Option<DateTime<Utc>>,
     pub data_window_to: Option<DateTime<Utc>>,
     pub refresh_in_progress: bool,
+    pub last_refresh_attempt_at: Option<DateTime<Utc>>,
+    pub last_refresh_success_at: Option<DateTime<Utc>>,
+    pub last_refresh_error: Option<String>,
     pub notes: Vec<String>,
     pub cards: Vec<MetricCard>,
     pub tables: Vec<TableBlock>,
