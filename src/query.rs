@@ -20,7 +20,7 @@ use crate::models::{
 const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
 const DUCKDB_MEMORY_LIMIT: &str = "512MB";
 const DUCKDB_THREADS: u32 = 2;
-const DASHBOARD_SNAPSHOT_VERSION: u32 = 2;
+const DASHBOARD_SNAPSHOT_VERSION: u32 = 3;
 const DASHBOARD_TOP_LIMIT: usize = 10;
 const DASHBOARD_FLOW_LIMIT: usize = 240;
 const MAX_DASHBOARD_DELTA_RANGE_HOURS: i64 = 2;
@@ -73,6 +73,8 @@ struct DashboardAggregate {
     top_departments: BTreeMap<String, i64>,
     #[serde(default)]
     top_response_codes: BTreeMap<String, i64>,
+    #[serde(default)]
+    top_policy_reasons: BTreeMap<String, i64>,
     country_flows: BTreeMap<String, i64>,
 }
 
@@ -508,6 +510,7 @@ impl QueryService {
         let ip_col = ident(&self.inner.fields.source_ip_field);
         let dept_col = ident(&self.inner.fields.department_field);
         let resp_code_col = ident(&self.inner.fields.response_code_field);
+        let reason_col = ident(&self.inner.fields.reason_field);
         let src_country_col = self.inner.fields.source_country_field.as_deref().map(ident);
         let dst_country_col = self
             .inner
@@ -604,6 +607,16 @@ impl QueryService {
                 parquet_src: parquet_src.as_str(),
             },
         )?;
+        let top_policy_reasons = group_counts(
+            &conn,
+            GroupCountArgs {
+                field_col: &reason_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+        )?;
 
         let country_flows = match (src_country_col.as_deref(), dst_country_col.as_deref()) {
             (Some(src_col), Some(dst_col)) => country_flow_counts(
@@ -630,6 +643,7 @@ impl QueryService {
             top_source_ips,
             top_departments,
             top_response_codes,
+            top_policy_reasons,
             country_flows,
         })
     }
@@ -672,6 +686,11 @@ impl QueryService {
             table_block_from_counts(
                 "top_response_codes",
                 &snapshot.aggregate.top_response_codes,
+                DASHBOARD_TOP_LIMIT,
+            ),
+            table_block_from_counts(
+                "top_policy_reasons",
+                &snapshot.aggregate.top_policy_reasons,
                 DASHBOARD_TOP_LIMIT,
             ),
             table_block_from_country_flows(
@@ -999,6 +1018,7 @@ impl DashboardAggregate {
             && self.top_source_ips.is_empty()
             && self.top_departments.is_empty()
             && self.top_response_codes.is_empty()
+            && self.top_policy_reasons.is_empty()
             && self.country_flows.is_empty()
     }
 
@@ -1013,6 +1033,7 @@ impl DashboardAggregate {
             top_source_ips: merged_counts(&self.top_source_ips, &delta.top_source_ips),
             top_departments: merged_counts(&self.top_departments, &delta.top_departments),
             top_response_codes: merged_counts(&self.top_response_codes, &delta.top_response_codes),
+            top_policy_reasons: merged_counts(&self.top_policy_reasons, &delta.top_policy_reasons),
             country_flows: merged_counts(&self.country_flows, &delta.country_flows),
         }
     }
@@ -1073,6 +1094,7 @@ fn empty_dashboard_response(
             empty_top_table("top_source_ips"),
             empty_top_table("top_departments"),
             empty_top_table("top_response_codes"),
+            empty_top_table("top_policy_reasons"),
             empty_country_flow_table("country_flows_24h"),
         ],
     }
@@ -2074,6 +2096,12 @@ mod tests {
                 .tables
                 .iter()
                 .any(|table| table.name == "top_response_codes")
+        );
+        assert!(
+            response
+                .tables
+                .iter()
+                .any(|table| table.name == "top_policy_reasons")
         );
     }
 

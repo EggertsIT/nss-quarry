@@ -580,6 +580,7 @@ Response includes:
   - `top_source_ips`
   - `top_departments`
   - `top_response_codes`
+  - `top_policy_reasons`
   - `country_flows_24h`
 - freshness metadata:
   - `status` (`warming`, `ready`, `stale`, `degraded`)
