@@ -362,6 +362,18 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
       align-items: start;
     }
+    .overview-focus-shell {
+      padding: 18px;
+      background:
+        radial-gradient(340px 140px at 100% -10%, rgba(31, 120, 216, 0.08), transparent 74%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(244, 249, 255, 0.965));
+    }
+    .overview-focus-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: start;
+    }
     .top-table-card {
       min-width: 0;
       padding: 14px;
@@ -381,6 +393,9 @@
       max-height: 320px;
       background: rgba(255, 255, 255, 0.96);
     }
+    .overview-focus-grid .top-table-card .table-wrap {
+      max-height: 356px;
+    }
     .top-map-card {
       min-height: 100%;
       display: flex;
@@ -399,6 +414,17 @@
     }
     .top-map-card .map-caption {
       margin-top: 0;
+    }
+    .overview-focus-grid .top-map-card .map-canvas {
+      min-height: 356px;
+    }
+    .card-empty {
+      padding: 18px 16px;
+      border: 1px dashed rgba(166, 191, 223, 0.86);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(246, 250, 255, 0.94), rgba(238, 245, 255, 0.9));
+      color: #5b7393;
+      font-size: 0.88rem;
     }
     .tables-shell {
       padding: 18px;
@@ -523,6 +549,9 @@
       .menu-group.right {
         margin-left: 0;
       }
+      .overview-focus-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
       .top-tables-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
@@ -535,6 +564,9 @@
       }
     }
     @media (max-width: 720px) {
+      .overview-focus-grid {
+        grid-template-columns: 1fr;
+      }
       .top-tables-grid {
         grid-template-columns: 1fr;
       }
@@ -883,9 +915,9 @@
         </div>
       </div>
 
-      <div class="panel panel-full-bleed tables-shell" style="margin-top: 14px;">
-        <h3>Top Tables</h3>
-        <div id="top-tables" class="top-tables-grid">
+      <div class="panel panel-full-bleed overview-focus-shell" style="margin-top: 14px;">
+        <h3>Priority Signals</h3>
+        <div id="overview-focus-grid" class="overview-focus-grid">
           <div id="overview-flow-map-card" class="top-table-card top-map-card">
             <h3>Global Country Flow Map (24h)</h3>
             <div class="network-map-wrap">
@@ -898,7 +930,20 @@
             </div>
             <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
           </div>
+          <div id="overview-top-users-card" class="top-table-card">
+            <h3>Top Users</h3>
+            <div class="card-empty">Waiting for dashboard aggregates.</div>
+          </div>
+          <div id="overview-top-categories-card" class="top-table-card">
+            <h3>Top Categories</h3>
+            <div class="card-empty">Waiting for dashboard aggregates.</div>
+          </div>
         </div>
+      </div>
+
+      <div class="panel panel-full-bleed tables-shell" style="margin-top: 14px;">
+        <h3>Top Tables</h3>
+        <div id="top-tables" class="top-tables-grid"></div>
       </div>
       </div>
 
@@ -1561,6 +1606,29 @@
       return (tables || []).find((table) => table && table.name === name) || null;
     }
 
+    function renderDashboardTableCard(hostId, table, fallbackTitle) {
+      const host = $(hostId);
+      if (!host) return;
+      const title = table ? formatDisplayName(table.name) : fallbackTitle;
+      host.innerHTML = `<h3>${title}</h3>`;
+      if (!table || !Array.isArray(table.rows) || table.rows.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "card-empty";
+        empty.textContent = "No aggregate data available for this window.";
+        host.appendChild(empty);
+        return;
+      }
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      wrap.appendChild(buildTable(table.columns || [], table.rows || []));
+      host.appendChild(wrap);
+    }
+
+    function renderOverviewFocus(tables) {
+      renderDashboardTableCard("overview-top-users-card", findDashboardTable(tables, "top_users"), "Top Users");
+      renderDashboardTableCard("overview-top-categories-card", findDashboardTable(tables, "top_categories"), "Top Categories");
+    }
+
     async function loadDashboard(refreshMode = null) {
       try {
         const suffix = refreshMode === "delta" ? "?refresh=delta" : "";
@@ -1574,6 +1642,7 @@
           div.innerHTML = `<div class="n">${card.name}</div><div class="k">${card.value}</div>`;
           cardsHost.appendChild(div);
         }
+        renderOverviewFocus(tables);
         renderTopTables(tables);
         renderChartFromTable(findDashboardTable(tables, "top_users"), "chart-a", "chart-title-a");
         renderChartFromTable(findDashboardTable(tables, "top_categories"), "chart-b", "chart-title-b");
@@ -1653,14 +1722,10 @@
 
     function renderTopTables(tables) {
       const host = $("top-tables");
-      const mapCard = $("overview-flow-map-card");
-      if (mapCard) {
-        host.replaceChildren(mapCard);
-      } else {
-        host.innerHTML = "";
-      }
+      host.innerHTML = "";
       if (!tables || tables.length === 0) return;
-      for (const table of tables.filter(t => t && t.name !== "country_flows_24h")) {
+      const excluded = new Set(["country_flows_24h", "top_users", "top_categories"]);
+      for (const table of tables.filter((t) => t && !excluded.has(t.name))) {
         const block = document.createElement("div");
         block.className = "top-table-card";
         block.innerHTML = `<h3>${formatDisplayName(table.name)}</h3>`;
