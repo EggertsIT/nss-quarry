@@ -2927,6 +2927,27 @@
       return text;
     }
 
+    function policyReasonCategory(reasonRaw) {
+      const reason = String(reasonRaw || "").toLowerCase();
+      if (!reason || reason === "none" || reason === "unknown reason") return "Unclassified";
+      if (reason.includes("ssl") || reason.includes("tls") || reason.includes("certificate") || reason.includes("ocsp") || reason.includes("handshake")) return "SSL/TLS";
+      if (reason.includes("url filtering") || reason.includes("denylist") || reason.includes("browse this category")) return "URL Filtering";
+      if (reason.includes("sandbox") || reason.includes("malware") || reason.includes("phishing") || reason.includes("botnet") || reason.includes("ips block") || reason.includes("reputation block")) return "Threat Protection";
+      if (reason.includes("country") || reason.includes("geo")) return "Geo Policy";
+      if (reason.includes("firewall") || reason.includes("dnat") || reason.includes("missing config") || reason.includes("timed out while waiting for a config")) return "Firewall/Infra";
+      if (reason.includes("dlp") || reason.includes("compliance")) return "DLP";
+      if (reason.includes("file") || reason.includes("upload/download") || reason.includes("attachment")) return "File Control";
+      if (reason.includes("cloud app") || reason.includes("webmail") || reason.includes("social network") || reason.includes("tenant")) return "Cloud App Control";
+      return "Policy";
+    }
+
+    function formatPolicyReasonForSankey(reasonRaw) {
+      const reason = normalizeSankeyValue(reasonRaw, "Unknown Reason");
+      if (reason === "Other Reasons") return reason;
+      const category = policyReasonCategory(reason);
+      return `${category}: ${reason}`;
+    }
+
     function topLabelSet(countMap, limit) {
       return new Set(
         Array.from(countMap.entries())
@@ -3001,7 +3022,7 @@
       const sourceCounts = new Map();
       const decisionCounts = new Map();
       for (const row of rows) {
-        const source = normalizeSankeyValue(row[sourceCol], sourceLabelFallback);
+        const source = formatPolicyReasonForSankey(normalizeSankeyValue(row[sourceCol], sourceLabelFallback));
         const decision = normalizeSankeyValue(row[decisionCol], decisionLabelFallback);
         const pairKey = `${source}\u001f${decision}`;
         rawPairs.set(pairKey, (rawPairs.get(pairKey) || 0) + 1);
@@ -3086,10 +3107,10 @@
         );
       }
 
-      function renderNodes(nodes, fill, anchor) {
+      function renderNodes(nodes, fill, anchor, maxLabelLength = 28) {
         return nodes
           .map((node) => {
-            const label = escapeHtml(truncateSankeyLabel(node.name));
+            const label = escapeHtml(truncateSankeyLabel(node.name, maxLabelLength));
             const safeName = escapeHtml(node.name);
             const textX = anchor === "start"
               ? node.x + node.width + 12
@@ -3109,11 +3130,12 @@
           .join("");
       }
 
-      const sourceSvg = renderNodes(sourceNodes, () => "#d6e9fb", "start");
+      const sourceSvg = renderNodes(sourceNodes, () => "#d6e9fb", "start", 56);
       const decisionSvg = renderNodes(
         decisionNodes,
         (node) => decisionColorMap.get(node.name) || "#1f7edc",
-        "end"
+        "end",
+        22
       );
       const svg = `
         <svg class="sankey-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
@@ -3124,8 +3146,8 @@
             </linearGradient>
           </defs>
           <rect x="0" y="0" width="${width}" height="${height}" fill="url(#search-sankey-bg)" />
-          <text class="sankey-column-title" x="${sourceX}" y="30" text-anchor="start">${escapeHtml(sourceCol)}</text>
-          <text class="sankey-column-title" x="${decisionX + nodeWidth}" y="30" text-anchor="end">${escapeHtml(decisionCol)}</text>
+          <text class="sankey-column-title" x="${sourceX}" y="30" text-anchor="start">Policy Reason</text>
+          <text class="sankey-column-title" x="${decisionX + nodeWidth}" y="30" text-anchor="end">Response Code</text>
           <g>${linkFragments.join("")}</g>
           <g>${sourceSvg}</g>
           <g>${decisionSvg}</g>
@@ -3133,7 +3155,7 @@
       `;
 
       host.innerHTML = svg;
-      meta.textContent = `Search Sankey (policy reason -> response code): ${sourceCol} -> ${decisionCol} | rows: ${rows.length.toLocaleString()} | rendered flows: ${srcMidSorted.length.toLocaleString()}`;
+      meta.textContent = `Search Sankey (Policy Reason -> Response Code): reasons are prefixed by policy category for clarity | rows: ${rows.length.toLocaleString()} | rendered flows: ${srcMidSorted.length.toLocaleString()}`;
     }
 
     function firstPresentColumn(rows, candidates) {
