@@ -309,7 +309,7 @@ impl QueryService {
     ) -> Result<AnalyticsSummaryResponse> {
         validate_time_window(from, to, self.inner.analytics_retention_days)?;
         let (snapshot, meta) = self
-            .analytics_snapshot_with_meta("overview", refresh_mode)
+            .analytics_snapshot_with_meta("analytics", refresh_mode)
             .await?;
         let aggregate = aggregate_for_recent_hours(&snapshot.hourly_buckets, from, to);
         Ok(AnalyticsSummaryResponse {
@@ -369,7 +369,7 @@ impl QueryService {
         validate_time_window(from, to, self.inner.analytics_retention_days)?;
         let requested = analytics_series_list(series)?;
         let (snapshot, meta) = self
-            .analytics_snapshot_with_meta("overview", refresh_mode)
+            .analytics_snapshot_with_meta("analytics", refresh_mode)
             .await?;
         let buckets = snapshot
             .hourly_buckets
@@ -423,7 +423,7 @@ impl QueryService {
         let dimension = AnalyticsDimension::parse(dimension)?;
         let effective_limit = limit.clamp(1, self.inner.analytics_top_n);
         let (snapshot, meta) = self
-            .analytics_snapshot_with_meta("overview", refresh_mode)
+            .analytics_snapshot_with_meta("analytics", refresh_mode)
             .await?;
         let aggregate = aggregate_for_recent_hours(&snapshot.hourly_buckets, from, to);
         let counts = analytics_dimension_counts(&aggregate, dimension);
@@ -762,14 +762,10 @@ impl QueryService {
     fn dashboard_full_snapshot_sync(&self, name: &str) -> Result<DashboardSnapshot> {
         let now = Utc::now();
         let window_to = floor_to_hour(now);
-        let window_from =
-            window_to - chrono::Duration::hours(self.inner.analytics_retention_days * 24);
+        let retention_days = snapshot_retention_days(name, self.inner.analytics_retention_days);
+        let window_from = window_to - chrono::Duration::hours(retention_days * 24);
         let hourly_buckets = self.analytics_buckets_for_range(window_from, window_to)?;
-        let aggregate = aggregate_for_recent_hours(
-            &hourly_buckets,
-            window_to - chrono::Duration::hours(24),
-            window_to,
-        );
+        let aggregate = aggregate_for_recent_hours(&hourly_buckets, window_from, window_to);
         Ok(DashboardSnapshot {
             version: DASHBOARD_SNAPSHOT_VERSION,
             name: name.to_string(),
@@ -800,19 +796,15 @@ impl QueryService {
         {
             return Ok(None);
         }
+        let retention_days = snapshot_retention_days(name, self.inner.analytics_retention_days);
         let merged_buckets = merge_analytics_buckets(
             &snapshot.hourly_buckets,
             &delta_buckets,
-            self.inner.analytics_retention_days,
+            retention_days,
             delta_to,
         );
-        let merged_aggregate = aggregate_for_recent_hours(
-            &merged_buckets,
-            delta_to - chrono::Duration::hours(24),
-            delta_to,
-        );
-        let merged_from =
-            delta_to - chrono::Duration::hours(self.inner.analytics_retention_days * 24);
+        let merged_from = delta_to - chrono::Duration::hours(retention_days * 24);
+        let merged_aggregate = aggregate_for_recent_hours(&merged_buckets, merged_from, delta_to);
         Ok(Some(DashboardSnapshot {
             version: DASHBOARD_SNAPSHOT_VERSION,
             name: name.to_string(),
@@ -1263,6 +1255,14 @@ impl QueryService {
             .map_err(|_| anyhow::anyhow!("dashboard snapshot cache lock poisoned"))?;
         guard.insert(snapshot.name.clone(), snapshot);
         Ok(())
+    }
+}
+
+fn snapshot_retention_days(name: &str, analytics_retention_days: i64) -> i64 {
+    if name == "overview" {
+        1
+    } else {
+        analytics_retention_days.max(1)
     }
 }
 
@@ -2884,7 +2884,7 @@ mod tests {
     fn sample_snapshot() -> DashboardSnapshot {
         DashboardSnapshot {
             version: DASHBOARD_SNAPSHOT_VERSION,
-            name: "overview".to_string(),
+            name: "analytics".to_string(),
             generated_at: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
             data_window_from: Utc.with_ymd_and_hms(2026, 4, 4, 12, 0, 0).unwrap(),
             data_window_to: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
