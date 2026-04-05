@@ -350,17 +350,8 @@ async fn readyz(State(state): State<AppState>) -> Response {
     }
 }
 
-async fn dashboard_page(State(state): State<AppState>) -> Response {
-    let mut res = Html(render_dashboard_html(state.cfg.auth.mode)).into_response();
-    res.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-store, no-cache, must-revalidate, max-age=0"),
-    );
-    res.headers_mut()
-        .insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
-    res.headers_mut()
-        .insert(header::EXPIRES, HeaderValue::from_static("0"));
-    res
+async fn dashboard_page(State(state): State<AppState>) -> Html<String> {
+    Html(render_dashboard_html(state.cfg.auth.mode))
 }
 
 async fn world_geojson() -> Response {
