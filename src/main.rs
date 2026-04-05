@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod models;
 mod pcap;
+mod pdf;
 mod query;
 mod summary;
 mod webui;
@@ -225,6 +226,7 @@ fn build_router(state: AppState) -> Router {
         .route("/api/search", post(api_search))
         .route("/api/summary/support", post(api_support_summary))
         .route("/api/export/csv", post(api_export_csv))
+        .route("/api/export/pdf-summary", post(api_export_pdf_summary))
         .route(
             "/api/pcap/analyze",
             post(api_pcap_analyze).layer(DefaultBodyLimit::max(pcap_upload_body_limit())),
@@ -590,7 +592,8 @@ async fn api_support_summary(
         RoleName::Helpdesk,
     )
     .await?;
-    let summary_search = build_support_summary_search_request(&state, &req.search).await?;
+    let mut summary_search = build_support_summary_search_request(&state, &req.search).await?;
+    summary_search.limit = Some(state.cfg.query.max_rows);
     let search_result = state
         .query
         .search(summary_search.clone(), user.role)
@@ -676,6 +679,82 @@ async fn api_export_csv(
         header::CONTENT_DISPOSITION,
         HeaderValue::from_static("attachment; filename=\"nss-quarry-export.csv\""),
     );
+    Ok(res)
+}
+
+async fn api_export_pdf_summary(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<SupportSummaryRequest>,
+) -> Result<Response, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let mut summary_search = build_support_summary_search_request(&state, &req.search).await?;
+    summary_search.limit = Some(state.cfg.query.max_rows);
+    let search_result = state
+        .query
+        .search(summary_search.clone(), user.role)
+        .await
+        .map_err(AppError::bad_request)?;
+    let summary = build_support_summary(
+        &req.search,
+        &search_result,
+        req.pcap_context.as_ref(),
+        &state.cfg.data.fields,
+    );
+    let pdf = crate::pdf::build_support_summary_pdf(
+        &summary,
+        &search_result,
+        &state.cfg.data.fields,
+        &user.username,
+    )
+    .map_err(AppError::internal)?;
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.export_pdf_summary".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "query": req.search,
+                "pcap_assisted": req.pcap_context.is_some(),
+                "pcap_context": audit_pcap_context(req.pcap_context.as_ref()),
+                "summary_search_columns": summary_search.columns.clone(),
+                "rows": summary.row_count,
+                "truncated": search_result.truncated,
+                "bytes": pdf.len(),
+            }),
+        })
+        .await;
+
+    let mut res = Response::new(pdf.into());
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/pdf"),
+    );
+    let filename = format!(
+        "nss-quarry-incident-report-{}.pdf",
+        Utc::now().format("%Y%m%d-%H%M%S")
+    );
+    let disposition = format!("attachment; filename=\"{filename}\"");
+    let disposition_header = HeaderValue::from_str(&disposition)
+        .map_err(|err| AppError::internal(format!("invalid content disposition: {err}")))?;
+    res.headers_mut()
+        .insert(header::CONTENT_DISPOSITION, disposition_header);
     Ok(res)
 }
 

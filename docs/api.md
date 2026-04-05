@@ -161,6 +161,7 @@ Typical error status codes:
 | `POST` | `/api/search` | `helpdesk+` | search logs |
 | `POST` | `/api/summary/support` | `helpdesk+` | generate a structured support summary from a bounded search |
 | `POST` | `/api/export/csv` | `helpdesk+` | export search results as CSV |
+| `POST` | `/api/export/pdf-summary` | `helpdesk+` | export a deep-dive incident report PDF for the current search window |
 | `POST` | `/api/pcap/analyze` | `helpdesk+` | analyze `.pcap` or `.pcapng` |
 | `GET` | `/api/dashboards/{name}` | `helpdesk+` | 24h dashboard aggregate payload |
 | `GET` | `/api/schema` | `helpdesk+` | schema mapping and detected parquet columns |
@@ -535,6 +536,57 @@ print("saved", len(response.content), "bytes")
 Response headers:
 - `Content-Type: text/csv; charset=utf-8`
 - `Content-Disposition: attachment; filename="nss-quarry-export.csv"`
+
+### `POST /api/export/pdf-summary`
+
+Builds a deep-dive incident report PDF from the current search window and optional PCAP context used by `POST /api/summary/support`.
+
+The export:
+
+- expands the search up to the configured server-side `max_rows` limit
+- preserves the support summary and findings sections
+- appends every returned transaction whose policy reason is not `Allowed`, `None`, `N/A`, or empty
+- marks the report as truncated when the bounded search result was truncated
+
+Request body:
+
+```json
+{
+  "search": {
+    "time_from": "2026-04-04T18:00:00Z",
+    "time_to": "2026-04-04T19:00:00Z",
+    "filters": {
+      "action": "Blocked",
+      "reason": "Not allowed to browse this category"
+    },
+    "limit": 500,
+    "columns": ["time", "action", "reason", "respcode", "sip", "url", "rulelabel", "devicehostname"]
+  },
+  "pcap_context": null
+}
+```
+
+Python:
+
+```python
+payload = {
+    "search": {
+        "time_from": "2026-04-04T18:00:00Z",
+        "time_to": "2026-04-04T19:00:00Z",
+        "filters": {
+            "action": "Blocked",
+            "reason": "Not allowed to browse this category",
+        },
+        "limit": 500,
+        "columns": ["time", "action", "reason", "respcode", "sip", "url", "rulelabel", "devicehostname"],
+    },
+    "pcap_context": None,
+}
+
+response = require_ok(session.post(f"{BASE_URL}/api/export/pdf-summary", json=payload))
+Path("nss-quarry-incident-report.pdf").write_bytes(response.content)
+print("saved", len(response.content), "bytes")
+```
 
 ### `POST /api/pcap/analyze`
 

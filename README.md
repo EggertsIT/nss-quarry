@@ -19,6 +19,7 @@ Production/commercial use requires a paid monthly commercial subscription from t
 - Embedded `NSS Ingestor` dashboard tab (admin-only, via `/ingestor/*` reverse-proxy).
 - Admin-only `Force Finalize Open Parquet Files` control (audited, source-IP logged).
 - CSV export with audit trail.
+- Deep-dive incident PDF export from support summary data.
 - RBAC: `helpdesk`, `analyst`, `admin`.
 - Authentication modes:
   - `oidc_entra`
@@ -191,6 +192,7 @@ Full API reference with Python examples:
 - `GET /api/me`
 - `POST /api/search`
 - `POST /api/export/csv`
+- `POST /api/export/pdf-summary` (deep-dive incident report PDF for the current search window)
 - `POST /api/pcap/analyze` (multipart upload: `pcap` file + optional `max_ips`)
 - `GET /api/dashboards/{name}` (`?refresh=delta` supported for manual current-window refresh)
 - `GET /api/audit` (admin only, server-side pagination and filtering)
