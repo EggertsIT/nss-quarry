@@ -1272,7 +1272,16 @@
       </div>
 
       <div class="panel sankey-panel" style="margin-top: 14px;">
-        <h3>Search Sankey</h3>
+        <div class="section-header">
+          <h3>Search Sankey</h3>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label for="search-sankey-mode" class="muted" style="margin:0;">Mapping</label>
+            <select id="search-sankey-mode" style="min-width: 280px;">
+              <option value="source_decision_destination" selected>Source → Decision → Destination</option>
+              <option value="policy_reason_response_code">Policy Reason → Response Code</option>
+            </select>
+          </div>
+        </div>
         <div id="search-sankey-wrap" class="sankey-canvas"></div>
         <div class="map-caption" id="search-sankey-meta">Run a search to render aggregated source -> decision -> destination flows.</div>
       </div>
@@ -1444,6 +1453,7 @@
     let currentUser = null;
     let latestSearchRequest = null;
     let latestPcapContext = null;
+    let latestSearchRows = [];
     let latestSearchRenderToken = 0;
     let activeSearchLoadingToken = 0;
     let latestSchema = null;
@@ -2953,17 +2963,24 @@
     }
 
     function renderSearchSankey(rows) {
+      const modeEl = $("search-sankey-mode");
+      const mode = modeEl ? String(modeEl.value || "source_decision_destination") : "source_decision_destination";
       const host = $("search-sankey-wrap");
       const meta = $("search-sankey-meta");
       host.innerHTML = "";
 
       if (!Array.isArray(rows) || rows.length === 0) {
-        meta.textContent = "Run a search to render aggregated source -> decision -> destination flows.";
-        host.innerHTML = "<div class='sankey-empty'>No search rows available for Sankey rendering.</div>";
+        if (mode === "policy_reason_response_code") {
+          meta.textContent = "Run a search to render policy reason -> response code mapping.";
+          host.innerHTML = "<div class='sankey-empty'>No search rows available for policy reason -> response code Sankey rendering.</div>";
+        } else {
+          meta.textContent = "Run a search to render aggregated source -> decision -> destination flows.";
+          host.innerHTML = "<div class='sankey-empty'>No search rows available for Sankey rendering.</div>";
+        }
         return;
       }
 
-      const sourceCol = firstPresentColumn(rows, [
+      let sourceCandidates = [
         mappedFieldName("source_country_field", "srcip_country"),
         mappedFieldName("department_field", "department"),
         mappedFieldName("user_field", "login"),
@@ -2972,27 +2989,99 @@
         "department",
         "login",
         "cip",
-      ]);
-      const decisionCol = firstPresentColumn(rows, [
+      ];
+      let decisionCandidates = [
         mappedFieldName("reason_field", "reason"),
         mappedFieldName("action_field", "action"),
         mappedFieldName("response_code_field", "respcode"),
         "reason",
         "action",
         "respcode",
-      ]);
-      const destinationCol = firstPresentColumn(rows, [
+      ];
+      let destinationCandidates = [
         mappedFieldName("destination_country_field", "dstip_country"),
         mappedFieldName("server_ip_field", "sip"),
         "host",
         "url",
         "dstip_country",
         "sip",
-      ]);
+      ];
+
+      let sourceLabelFallback = "Unknown Source";
+      let decisionLabelFallback = "Unknown Decision";
+      let destinationLabelFallback = "Unknown Destination";
+      let otherSourceLabel = "Other Sources";
+      let otherDecisionLabel = "Other Decisions";
+      let otherDestinationLabel = "Other Destinations";
+      let topSourceLimit = 8;
+      let topDecisionLimit = 10;
+      let topDestinationLimit = 8;
+      let srcMidLimit = 40;
+      let midDstLimit = 40;
+      let ariaLabel = "Search sankey";
+      let width = 1400;
+      let height = 500;
+      let sourceX = 120;
+      let destinationX = width - 120 - 18;
+      let centerDecision = true;
+      let decisionAnchor = "middle";
+      let renderDestinationNodes = true;
+      let modeDescription = "source -> decision -> destination";
+
+      if (mode === "policy_reason_response_code") {
+        sourceCandidates = [
+          mappedFieldName("reason_field", "reason"),
+          "reason",
+          "policy_reason",
+        ];
+        decisionCandidates = [
+          mappedFieldName("response_code_field", "respcode"),
+          "respcode",
+          "response_code",
+          "status",
+          "status_code",
+        ];
+        destinationCandidates = [
+          mappedFieldName("response_code_field", "respcode"),
+          "respcode",
+          "response_code",
+          "status",
+          "status_code",
+        ];
+        sourceLabelFallback = "Unknown Reason";
+        decisionLabelFallback = "Unknown Response Code";
+        destinationLabelFallback = "Unknown Response Code";
+        otherSourceLabel = "Other Reasons";
+        otherDecisionLabel = "Other Response Codes";
+        otherDestinationLabel = "Other Response Codes";
+        topSourceLimit = 14;
+        topDecisionLimit = 12;
+        topDestinationLimit = 12;
+        srcMidLimit = 80;
+        midDstLimit = 0;
+        ariaLabel = "Search sankey policy reason to response code";
+        width = 1400;
+        height = 520;
+        sourceX = 170;
+        destinationX = width - 170 - 18;
+        centerDecision = false;
+        decisionAnchor = "end";
+        renderDestinationNodes = false;
+        modeDescription = "policy reason -> response code";
+      }
+
+      const sourceCol = firstPresentColumn(rows, sourceCandidates);
+      const decisionCol = firstPresentColumn(rows, decisionCandidates);
+      const destinationCol = firstPresentColumn(rows, destinationCandidates);
 
       if (!sourceCol || !decisionCol || !destinationCol) {
-        meta.textContent = "Sankey unavailable: missing source/decision/destination columns in current search result.";
-        host.innerHTML = "<div class='sankey-empty'>Add source, decision, and destination columns to the search results to render a Sankey.</div>";
+        if (mode === "policy_reason_response_code") {
+          meta.textContent = "Sankey unavailable: missing policy reason and/or response code columns in current search result.";
+          host.innerHTML = "<div class='sankey-empty'>Add both columns to the search results: reason and respcode.</div>";
+        } else {
+          meta.textContent = "Sankey unavailable: missing source/decision/destination columns in current search result.";
+          host.innerHTML = "<div class='sankey-empty'>Add source, decision, and destination columns to the search results to render a Sankey.</div>";
+        }
         return;
       }
 
@@ -3001,9 +3090,9 @@
       const decisionCounts = new Map();
       const destinationCounts = new Map();
       for (const row of rows) {
-        const source = normalizeSankeyValue(row[sourceCol], "Unknown Source");
-        const decision = normalizeSankeyValue(row[decisionCol], "Unknown Decision");
-        const destination = normalizeSankeyValue(row[destinationCol], "Unknown Destination");
+        const source = normalizeSankeyValue(row[sourceCol], sourceLabelFallback);
+        const decision = normalizeSankeyValue(row[decisionCol], decisionLabelFallback);
+        const destination = normalizeSankeyValue(row[destinationCol], destinationLabelFallback);
         const tripleKey = `${source}\u001f${decision}\u001f${destination}`;
         rawTriples.set(tripleKey, (rawTriples.get(tripleKey) || 0) + 1);
         sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
@@ -3011,9 +3100,9 @@
         destinationCounts.set(destination, (destinationCounts.get(destination) || 0) + 1);
       }
 
-      const topSources = topLabelSet(sourceCounts, 8);
-      const topDecisions = topLabelSet(decisionCounts, 10);
-      const topDestinations = topLabelSet(destinationCounts, 8);
+      const topSources = topLabelSet(sourceCounts, topSourceLimit);
+      const topDecisions = topLabelSet(decisionCounts, topDecisionLimit);
+      const topDestinations = topLabelSet(destinationCounts, topDestinationLimit);
       const srcMidLinks = new Map();
       const midDstLinks = new Map();
       const sourceTotals = new Map();
@@ -3022,32 +3111,34 @@
 
       for (const [tripleKey, count] of rawTriples.entries()) {
         const [rawSource, rawDecision, rawDestination] = tripleKey.split("\u001f");
-        const source = topSources.has(rawSource) ? rawSource : "Other Sources";
-        const decision = topDecisions.has(rawDecision) ? rawDecision : "Other Decisions";
-        const destination = topDestinations.has(rawDestination) ? rawDestination : "Other Destinations";
+        const source = topSources.has(rawSource) ? rawSource : otherSourceLabel;
+        const decision = topDecisions.has(rawDecision) ? rawDecision : otherDecisionLabel;
+        const destination = topDestinations.has(rawDestination) ? rawDestination : otherDestinationLabel;
         const srcMidKey = `${source}\u001f${decision}`;
-        const midDstKey = `${decision}\u001f${destination}`;
         srcMidLinks.set(srcMidKey, (srcMidLinks.get(srcMidKey) || 0) + count);
-        midDstLinks.set(midDstKey, (midDstLinks.get(midDstKey) || 0) + count);
         sourceTotals.set(source, (sourceTotals.get(source) || 0) + count);
         decisionTotals.set(decision, (decisionTotals.get(decision) || 0) + count);
-        destinationTotals.set(destination, (destinationTotals.get(destination) || 0) + count);
+
+        if (renderDestinationNodes) {
+          const midDstKey = `${decision}\u001f${destination}`;
+          midDstLinks.set(midDstKey, (midDstLinks.get(midDstKey) || 0) + count);
+          destinationTotals.set(destination, (destinationTotals.get(destination) || 0) + count);
+        }
       }
 
       const sources = Array.from(sourceTotals.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
       const decisions = Array.from(decisionTotals.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
       const destinations = Array.from(destinationTotals.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
       const totalCount = rows.length;
-      const width = 1400;
-      const height = 500;
       const topPad = 56;
       const bottomPad = 22;
       const columnGap = 12;
       const nodeWidth = 18;
-      const sourceX = 120;
-      const decisionX = width / 2 - nodeWidth / 2;
-      const destinationX = width - 120 - nodeWidth;
-      const maxNodeCount = Math.max(sources.length, decisions.length, destinations.length, 1);
+      const decisionX = centerDecision ? width / 2 - nodeWidth / 2 : destinationX;
+      const finalDestinationX = width - 120 - nodeWidth;
+      const maxNodeCount = renderDestinationNodes
+        ? Math.max(sources.length, decisions.length, destinations.length, 1)
+        : Math.max(sources.length, decisions.length, 1);
       const scale = Math.max(
         0.14,
         (height - topPad - bottomPad - (maxNodeCount - 1) * columnGap) / Math.max(totalCount, 1)
@@ -3065,7 +3156,7 @@
 
       const sourceNodes = layoutColumn(sources, sourceX);
       const decisionNodes = layoutColumn(decisions, decisionX);
-      const destinationNodes = layoutColumn(destinations, destinationX);
+      const destinationNodes = renderDestinationNodes ? layoutColumn(destinations, finalDestinationX) : [];
       const sourceNodeMap = new Map(sourceNodes.map((node) => [node.name, node]));
       const decisionNodeMap = new Map(decisionNodes.map((node) => [node.name, node]));
       const destinationNodeMap = new Map(destinationNodes.map((node) => [node.name, node]));
@@ -3077,7 +3168,7 @@
       const destinationOffsets = new Map(destinationNodes.map((node) => [node.name, node.y]));
 
       function buildLinkPath(x1, y1, x2, y2) {
-        const dx = Math.max(120, Math.abs(x2 - x1) * 0.46);
+        const dx = Math.max(renderDestinationNodes ? 120 : 180, Math.abs(x2 - x1) * (renderDestinationNodes ? 0.46 : 0.42));
         return `M ${x1.toFixed(1)} ${y1.toFixed(1)} C ${(x1 + dx).toFixed(1)} ${y1.toFixed(1)}, ${(x2 - dx).toFixed(1)} ${y2.toFixed(1)}, ${x2.toFixed(1)} ${y2.toFixed(1)}`;
       }
 
@@ -3088,14 +3179,14 @@
           return { source, decision, count };
         })
         .sort((a, b) => b.count - a.count || a.source.localeCompare(b.source) || a.decision.localeCompare(b.decision))
-        .slice(0, 40);
+        .slice(0, srcMidLimit);
       const midDstSorted = Array.from(midDstLinks.entries())
         .map(([key, count]) => {
           const [decision, destination] = key.split("\u001f");
           return { decision, destination, count };
         })
         .sort((a, b) => b.count - a.count || a.decision.localeCompare(b.decision) || a.destination.localeCompare(b.destination))
-        .slice(0, 40);
+        .slice(0, midDstLimit);
 
       for (const link of srcMidSorted) {
         const sourceNode = sourceNodeMap.get(link.source);
@@ -3154,11 +3245,16 @@
       const decisionSvg = renderNodes(
         decisionNodes,
         (node) => decisionColorMap.get(node.name) || "#1f7edc",
-        "middle"
+        decisionAnchor
       );
-      const destinationSvg = renderNodes(destinationNodes, () => "#dff4ff", "end");
+      const destinationSvg = renderDestinationNodes ? renderNodes(destinationNodes, () => "#dff4ff", "end") : "";
+      const sourceTitleAnchor = "start";
+      const decisionTitleAnchor = renderDestinationNodes ? "middle" : "end";
+      const destinationTitle = renderDestinationNodes
+        ? `<text class="sankey-column-title" x="${finalDestinationX + nodeWidth}" y="30" text-anchor="end">${escapeHtml(destinationCol)}</text>`
+        : "";
       const svg = `
-        <svg class="sankey-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Search sankey">
+        <svg class="sankey-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${ariaLabel}">
           <defs>
             <linearGradient id="search-sankey-bg" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stop-color="#f8fbff" />
@@ -3166,9 +3262,9 @@
             </linearGradient>
           </defs>
           <rect x="0" y="0" width="${width}" height="${height}" fill="url(#search-sankey-bg)" />
-          <text class="sankey-column-title" x="${sourceX}" y="30" text-anchor="start">${escapeHtml(sourceCol)}</text>
-          <text class="sankey-column-title" x="${decisionX + nodeWidth / 2}" y="30" text-anchor="middle">${escapeHtml(decisionCol)}</text>
-          <text class="sankey-column-title" x="${destinationX + nodeWidth}" y="30" text-anchor="end">${escapeHtml(destinationCol)}</text>
+          <text class="sankey-column-title" x="${sourceX}" y="30" text-anchor="${sourceTitleAnchor}">${escapeHtml(sourceCol)}</text>
+          <text class="sankey-column-title" x="${decisionX + (renderDestinationNodes ? nodeWidth / 2 : nodeWidth)}" y="30" text-anchor="${decisionTitleAnchor}">${escapeHtml(decisionCol)}</text>
+          ${destinationTitle}
           <g>${linkFragments.join("")}</g>
           <g>${sourceSvg}</g>
           <g>${decisionSvg}</g>
@@ -3177,7 +3273,8 @@
       `;
 
       host.innerHTML = svg;
-      meta.textContent = `Search Sankey: ${sourceCol} -> ${decisionCol} -> ${destinationCol} | rows: ${rows.length.toLocaleString()} | rendered flows: ${(srcMidSorted.length + midDstSorted.length).toLocaleString()}`;
+      const renderedFlows = srcMidSorted.length + midDstSorted.length;
+      meta.textContent = `Search Sankey (${modeDescription}): ${sourceCol} -> ${decisionCol}${renderDestinationNodes ? ` -> ${destinationCol}` : ""} | rows: ${rows.length.toLocaleString()} | rendered flows: ${renderedFlows.toLocaleString()}`;
     }
 
     function firstPresentColumn(rows, candidates) {
@@ -3650,6 +3747,7 @@
 
     function renderSearchResult(result, renderToken, metrics = null, displayColumns = null) {
       const rows = result.rows || [];
+      latestSearchRows = Array.isArray(rows) ? rows : [];
       const parts = [
         `Rows: ${result.row_count}`,
         `Truncated: ${result.truncated ? "yes" : "no"}`,
@@ -4225,6 +4323,16 @@
         e.preventDefault();
         try { await runSearch(); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
       });
+      const sankeyMode = $("search-sankey-mode");
+      if (sankeyMode) {
+        sankeyMode.addEventListener("change", () => {
+          try {
+            renderSearchSankey(Array.isArray(latestSearchRows) ? latestSearchRows : []);
+          } catch (err) {
+            console.warn("search sankey mode render failed", err);
+          }
+        });
+      }
       $("export-csv").addEventListener("click", async () => {
         try { await exportCsv(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }
       });
