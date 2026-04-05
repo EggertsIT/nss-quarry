@@ -202,7 +202,7 @@ Full API reference with Python examples:
 - `GET /api/me`
 - `POST /api/search`
 - `POST /api/export/csv`
-- `POST /api/export/pdf-summary` (deep-dive incident report PDF for the current search window, including relevant non-allowed transactions)
+- `POST /api/export/pdf-summary` (support-summary PDF for current search window)
 - `GET /api/analytics/summary`
 - `GET /api/analytics/timeseries`
 - `GET /api/analytics/top`

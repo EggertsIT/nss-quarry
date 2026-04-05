@@ -653,8 +653,7 @@ async fn api_support_summary(
         RoleName::Helpdesk,
     )
     .await?;
-    let mut summary_search = build_support_summary_search_request(&state, &req.search).await?;
-    summary_search.limit = Some(state.cfg.query.max_rows);
+    let summary_search = build_support_summary_search_request(&state, &req.search).await?;
     let search_result = state
         .query
         .search(summary_search.clone(), user.role)
@@ -771,13 +770,8 @@ async fn api_export_pdf_summary(
         req.pcap_context.as_ref(),
         &state.cfg.data.fields,
     );
-    let pdf = crate::pdf::build_support_summary_pdf(
-        &summary,
-        &search_result,
-        &state.cfg.data.fields,
-        &user.username,
-    )
-    .map_err(AppError::internal)?;
+    let pdf = crate::pdf::build_support_summary_pdf(&summary, &user.username)
+        .map_err(AppError::internal)?;
 
     state
         .audit
@@ -795,7 +789,7 @@ async fn api_export_pdf_summary(
                 "pcap_context": audit_pcap_context(req.pcap_context.as_ref()),
                 "summary_search_columns": summary_search.columns.clone(),
                 "rows": summary.row_count,
-                "truncated": search_result.truncated,
+                "truncated": summary.truncated,
                 "bytes": pdf.len(),
             }),
         })
@@ -807,7 +801,7 @@ async fn api_export_pdf_summary(
         HeaderValue::from_static("application/pdf"),
     );
     let filename = format!(
-        "nss-quarry-incident-report-{}.pdf",
+        "nss-quarry-summary-{}.pdf",
         Utc::now().format("%Y%m%d-%H%M%S")
     );
     let disposition = format!("attachment; filename=\"{filename}\"");
