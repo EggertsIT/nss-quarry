@@ -196,6 +196,7 @@ Full API reference with Python examples:
 - `GET /api/me`
 - `POST /api/search`
 - `POST /api/export/csv`
+- `POST /api/export/pdf-summary` (support-summary PDF for current search window)
 - `POST /api/integrations/servicenow/investigations`
 - `GET /api/integrations/servicenow/jobs/{job_id}`
 - `GET /api/integrations/servicenow/jobs/{job_id}/result`
