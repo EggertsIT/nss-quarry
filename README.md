@@ -15,6 +15,7 @@ Production/commercial use requires a paid monthly commercial subscription from t
 
 - Query last 14-day parquet partitions with strict guardrails (max 7-day query window by default).
 - Troubleshooting dashboards and filtered search APIs.
+- Aggregate-backed analytics APIs for fast summary, timeseries, and top-value reporting.
 - Global country flow map (24h) using `srcip_country -> dstip_country`.
 - Embedded `NSS Ingestor` dashboard tab (admin-only, via `/ingestor/*` reverse-proxy).
 - Admin-only `Force Finalize Open Parquet Files` control (audited, source-IP logged).
@@ -122,6 +123,11 @@ cp config.example.toml config.toml
 - admin visibility filters are managed in the Dashboard `Config` tab and persisted at `/var/lib/nss-quarry/visibility_filters.json` (derived from `audit.path` directory).
 - `auth.mode`
 - auth settings for the chosen mode.
+- query aggregate settings:
+  - `query.dashboard_snapshot_refresh_secs` (hourly rebuild cadence for dashboard and analytics base snapshots)
+  - `query.analytics_retention_days` (how much hourly aggregate history to keep; default `14`)
+  - `query.analytics_top_n` (per-hour cap for high-cardinality dimensions such as users/devices/destination IPs; default `50`)
+  - `query.analytics_cache_dir` (persisted aggregate snapshot location)
 - ingestor control settings:
   - `ingestor.base_url` (default `http://127.0.0.1:9090`)
   - `ingestor.request_timeout_ms` (default `5000`)
@@ -197,6 +203,9 @@ Full API reference with Python examples:
 - `POST /api/search`
 - `POST /api/export/csv`
 - `POST /api/export/pdf-summary` (support-summary PDF for current search window)
+- `GET /api/analytics/summary`
+- `GET /api/analytics/timeseries`
+- `GET /api/analytics/top`
 - `POST /api/integrations/servicenow/investigations`
 - `GET /api/integrations/servicenow/jobs/{job_id}`
 - `GET /api/integrations/servicenow/jobs/{job_id}/result`
@@ -220,6 +229,9 @@ API authentication:
 Dashboard behavior:
 - the main dashboard is served from a persisted hourly snapshot, not a live full 24-hour parquet scan on every page load
 - `query.dashboard_snapshot_refresh_secs` controls the hourly rebuild cadence
+- `query.analytics_retention_days` controls how much hourly aggregate history is kept for reporting APIs
+- `query.analytics_top_n` caps high-cardinality aggregate dimensions per hour to keep read-side storage bounded
+- `query.analytics_cache_dir` controls where persisted aggregate snapshots are stored
 - the browser `Refresh` button requests `?refresh=delta`, which merges newer finalized parquet data on top of the latest hourly snapshot when available
 - dashboard responses include explicit state and freshness metadata such as `status`, `source`, `snapshot_generated_at`, `snapshot_age_seconds`, `data_window_from`, `data_window_to`, `refresh_in_progress`, `last_refresh_attempt_at`, `last_refresh_success_at`, `last_refresh_error`, and `notes`
 

@@ -175,6 +175,74 @@ pub struct DashboardResponse {
     pub tables: Vec<TableBlock>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsMeta {
+    pub generated_at: DateTime<Utc>,
+    pub status: DashboardStatus,
+    pub source: String,
+    pub snapshot_generated_at: Option<DateTime<Utc>>,
+    pub snapshot_age_seconds: Option<i64>,
+    pub data_window_from: Option<DateTime<Utc>>,
+    pub data_window_to: Option<DateTime<Utc>>,
+    pub refresh_in_progress: bool,
+    pub last_refresh_attempt_at: Option<DateTime<Utc>>,
+    pub last_refresh_success_at: Option<DateTime<Utc>>,
+    pub last_refresh_error: Option<String>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsCountRow {
+    pub value: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsSummaryResponse {
+    pub meta: AnalyticsMeta,
+    pub time_from: DateTime<Utc>,
+    pub time_to: DateTime<Utc>,
+    pub events: i64,
+    pub blocked: i64,
+    pub threats: i64,
+    pub top_response_codes: Vec<AnalyticsCountRow>,
+    pub top_policy_reasons: Vec<AnalyticsCountRow>,
+    pub top_categories: Vec<AnalyticsCountRow>,
+    pub top_users: Vec<AnalyticsCountRow>,
+    pub top_devices: Vec<AnalyticsCountRow>,
+    pub top_destination_ips: Vec<AnalyticsCountRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsTimeseriesPoint {
+    pub at: DateTime<Utc>,
+    pub value: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsSeries {
+    pub series: String,
+    pub label: String,
+    pub points: Vec<AnalyticsTimeseriesPoint>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsTimeseriesResponse {
+    pub meta: AnalyticsMeta,
+    pub time_from: DateTime<Utc>,
+    pub time_to: DateTime<Utc>,
+    pub series: Vec<AnalyticsSeries>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalyticsTopResponse {
+    pub meta: AnalyticsMeta,
+    pub time_from: DateTime<Utc>,
+    pub time_to: DateTime<Utc>,
+    pub dimension: String,
+    pub rows: Vec<AnalyticsCountRow>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct SchemaFieldInfo {
     pub name: String,
