@@ -20,7 +20,10 @@ const CLEANUP_INTERVAL_SECS: u64 = 3600;
 const MAX_SESSIONS: usize = 2_000;
 const MAX_PINNED_ITEMS_PER_SESSION: usize = 500;
 const MAX_ROW_FIELDS: usize = 512;
-const MAX_FILTER_TEXT_LEN: usize = 512;
+const MAX_NOTE_TEXT_LEN: usize = 512;
+const MAX_FILTER_TEXT_LEN: usize = 8_192;
+const MAX_CSV_FILTER_TEXT_LEN: usize = 200_000;
+const MAX_CSV_FILTER_VALUES: usize = 6_000;
 const MAX_ROW_TEXT_LEN: usize = 2_048;
 const MAX_PIVOTS_PER_SESSION: usize = 100;
 
@@ -185,7 +188,7 @@ impl InvestigationService {
                 .as_deref()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
-                .map(|text| text.chars().take(MAX_FILTER_TEXT_LEN).collect::<String>());
+                .map(|text| text.chars().take(MAX_NOTE_TEXT_LEN).collect::<String>());
             session.pinned_items.push(InvestigationPinnedItem {
                 id: Uuid::new_v4().to_string(),
                 pinned_at: Utc::now(),
@@ -343,7 +346,7 @@ fn build_pivots(
     let mut out = Vec::with_capacity(pivots.len());
     for pivot in pivots {
         validate_identifier(&pivot.field)?;
-        validate_filter_text(&pivot.value, input_value_re)?;
+        validate_filter_text(&pivot.value, input_value_re, false)?;
         out.push(InvestigationPivot {
             id: Uuid::new_v4().to_string(),
             field: pivot.field.trim().to_string(),
@@ -373,39 +376,67 @@ fn validate_columns(columns: &[String]) -> Result<()> {
 }
 
 fn validate_filters(filters: &SearchFilters, input_value_re: &Regex) -> Result<()> {
-    let values = [
-        filters.user.as_deref(),
-        filters.url.as_deref(),
-        filters.action.as_deref(),
-        filters.response_code.as_deref(),
-        filters.reason.as_deref(),
-        filters.threat.as_deref(),
-        filters.category.as_deref(),
-        filters.source_ip.as_deref(),
-        filters.server_ip.as_deref(),
-        filters.source_country.as_deref(),
-        filters.destination_country.as_deref(),
-        filters.device.as_deref(),
-        filters.department.as_deref(),
-    ];
-    for value in values.into_iter().flatten() {
-        validate_filter_text(value, input_value_re)?;
-    }
+    validate_filter_value(filters.user.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.url.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.action.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.response_code.as_deref(), input_value_re, true)?;
+    validate_filter_value(filters.reason.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.threat.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.category.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.source_ip.as_deref(), input_value_re, true)?;
+    validate_filter_value(filters.server_ip.as_deref(), input_value_re, true)?;
+    validate_filter_value(filters.source_country.as_deref(), input_value_re, true)?;
+    validate_filter_value(filters.destination_country.as_deref(), input_value_re, true)?;
+    validate_filter_value(filters.device.as_deref(), input_value_re, false)?;
+    validate_filter_value(filters.department.as_deref(), input_value_re, false)?;
     Ok(())
 }
 
-fn validate_filter_text(value: &str, input_value_re: &Regex) -> Result<()> {
+fn validate_filter_text(value: &str, input_value_re: &Regex, allow_csv: bool) -> Result<()> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Ok(());
     }
-    if trimmed.len() > MAX_FILTER_TEXT_LEN {
+    if !allow_csv && trimmed.len() > MAX_FILTER_TEXT_LEN {
         anyhow::bail!("filter value exceeds {MAX_FILTER_TEXT_LEN} characters");
+    }
+    if allow_csv && trimmed.len() > MAX_CSV_FILTER_TEXT_LEN {
+        anyhow::bail!("filter CSV value exceeds {MAX_CSV_FILTER_TEXT_LEN} characters");
     }
     if !input_value_re.is_match(trimmed) {
         anyhow::bail!("filter value contains disallowed characters");
     }
     Ok(())
+}
+
+fn validate_filter_value(
+    value: Option<&str>,
+    input_value_re: &Regex,
+    allow_csv: bool,
+) -> Result<()> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if allow_csv {
+        let parts = split_csv_values(value);
+        if parts.len() > MAX_CSV_FILTER_VALUES {
+            anyhow::bail!("too many CSV filter values (max {})", MAX_CSV_FILTER_VALUES);
+        }
+        for part in parts {
+            validate_filter_text(&part, input_value_re, false)?;
+        }
+        return Ok(());
+    }
+    validate_filter_text(value, input_value_re, false)
+}
+
+fn split_csv_values(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .collect()
 }
 
 fn validate_pin_row(
