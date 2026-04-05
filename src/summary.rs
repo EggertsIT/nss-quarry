@@ -1020,6 +1020,8 @@ mod tests {
             time_to: Utc.with_ymd_and_hms(2026, 4, 5, 11, 0, 0).unwrap(),
             filters: Default::default(),
             limit: Some(200),
+            page: None,
+            page_size: None,
             columns: None,
         }
     }
@@ -1035,6 +1037,9 @@ mod tests {
             ])],
             row_count: 1,
             truncated: false,
+            page: 1,
+            page_size: 200,
+            has_more: false,
         };
         let summary = build_support_summary(&base_request(), &response, None, &FieldMap::default());
 
@@ -1064,6 +1069,9 @@ mod tests {
             ])],
             row_count: 1,
             truncated: false,
+            page: 1,
+            page_size: 200,
+            has_more: false,
         };
         let summary = build_support_summary(&base_request(), &response, None, &FieldMap::default());
 
@@ -1087,6 +1095,9 @@ mod tests {
             ],
             row_count: 2,
             truncated: false,
+            page: 1,
+            page_size: 200,
+            has_more: false,
         };
         let summary = build_support_summary(&base_request(), &response, None, &FieldMap::default());
 
@@ -1109,6 +1120,9 @@ mod tests {
             rows: Vec::new(),
             row_count: 0,
             truncated: false,
+            page: 1,
+            page_size: 200,
+            has_more: false,
         };
         let summary = build_support_summary(&base_request(), &response, None, &FieldMap::default());
 

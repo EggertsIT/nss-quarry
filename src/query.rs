@@ -781,7 +781,15 @@ impl QueryService {
         let limit = req
             .limit
             .unwrap_or(self.inner.default_limit)
-            .min(self.inner.max_rows);
+            .clamp(1, self.inner.max_rows);
+        let page_size = req.page_size.unwrap_or(limit).clamp(1, limit);
+        let max_pages = self.inner.max_rows.div_ceil(page_size).max(1);
+        let page = req.page.unwrap_or(1).clamp(1, max_pages);
+        let start_index = (page - 1).saturating_mul(page_size);
+        let collect_target = start_index
+            .saturating_add(page_size)
+            .saturating_add(1)
+            .min(self.inner.max_rows.saturating_add(1));
 
         let groups =
             parquet_file_groups_for_range(&self.inner.parquet_root, req.time_from, req.time_to)?;
@@ -790,6 +798,9 @@ impl QueryService {
                 rows: Vec::new(),
                 row_count: 0,
                 truncated: false,
+                page,
+                page_size,
+                has_more: false,
             });
         }
 
@@ -799,7 +810,7 @@ impl QueryService {
             .read()
             .map_err(|_| anyhow::anyhow!("visibility filters lock poisoned"))?
             .clone();
-        let batch_limit = search_batch_limit(limit, self.inner.max_rows);
+        let batch_limit = search_batch_limit(page_size);
         let conn = open_query_connection()?;
         let mut out = Vec::new();
 
@@ -825,8 +836,8 @@ impl QueryService {
                     apply_helpdesk_masking(&mut batch, &self.inner.helpdesk_mask_fields);
                 }
                 out.extend(batch);
-                if out.len() as u32 >= limit {
-                    out.truncate(limit as usize);
+                if out.len() as u32 >= collect_target {
+                    out.truncate(collect_target as usize);
                     break 'hours;
                 }
                 if raw_count < batch_limit {
@@ -836,11 +847,22 @@ impl QueryService {
             }
         }
 
-        let row_count = out.len();
+        let start = start_index as usize;
+        let end = start.saturating_add(page_size as usize).min(out.len());
+        let rows = if start < out.len() {
+            out[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        let has_more = out.len() > end;
+        let row_count = rows.len();
         Ok(SearchResponse {
-            rows: out,
+            rows,
             row_count,
-            truncated: row_count as u32 >= limit,
+            truncated: has_more,
+            page,
+            page_size,
+            has_more,
         })
     }
 
@@ -1407,8 +1429,8 @@ fn execute_search_sql(
     Ok(out)
 }
 
-fn search_batch_limit(limit: u32, max_rows: u32) -> u32 {
-    max_rows.max(limit).clamp(500, 5_000)
+fn search_batch_limit(page_size: u32) -> u32 {
+    page_size.clamp(200, 1_000)
 }
 
 fn open_query_connection() -> Result<Connection> {
@@ -1927,6 +1949,8 @@ mod tests {
                 ..SearchFilters::default()
             },
             limit: Some(123),
+            page: None,
+            page_size: None,
             columns: Some(vec!["time".to_string(), "url".to_string()]),
         };
         let columns = req.columns.clone().expect("columns");
@@ -1964,6 +1988,8 @@ mod tests {
                 ..SearchFilters::default()
             },
             limit: Some(50),
+            page: None,
+            page_size: None,
             columns: Some(vec!["time".to_string(), "sip".to_string()]),
         };
         let columns = req.columns.clone().expect("columns");
@@ -2047,6 +2073,8 @@ mod tests {
             time_to: Utc.with_ymd_and_hms(2026, 4, 1, 1, 0, 0).unwrap(),
             filters: SearchFilters::default(),
             limit: Some(200),
+            page: None,
+            page_size: None,
             columns: Some(vec!["time".to_string()]),
         };
         let columns = req.columns.clone().expect("columns");

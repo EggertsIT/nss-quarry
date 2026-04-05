@@ -28,6 +28,8 @@ pub struct SearchRequest {
     #[serde(default)]
     pub filters: SearchFilters,
     pub limit: Option<u32>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
     pub columns: Option<Vec<String>>,
 }
 
@@ -54,6 +56,9 @@ pub struct SearchResponse {
     pub rows: Vec<serde_json::Map<String, serde_json::Value>>,
     pub row_count: usize,
     pub truncated: bool,
+    pub page: u32,
+    pub page_size: u32,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

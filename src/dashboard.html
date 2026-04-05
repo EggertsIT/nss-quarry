@@ -1304,6 +1304,11 @@
           </div>
         </div>
         <div class="muted" id="result-meta"></div>
+        <div class="toolbar" style="margin-top: 8px;">
+          <button id="search-prev" type="button" class="ghost">Prev</button>
+          <button id="search-next" type="button" class="ghost">Next</button>
+          <div id="search-page-info" class="muted">Page 1</div>
+        </div>
         <div id="results" class="table-wrap results-table-wrap" style="margin-top: 8px;"></div>
         <div id="search-result-tables" class="search-result-tables-grid">
           <div class="search-result-table-card">
@@ -1446,6 +1451,10 @@
     let latestPcapContext = null;
     let latestSearchRenderToken = 0;
     let activeSearchLoadingToken = 0;
+    let searchPage = 1;
+    let searchPageSize = 200;
+    let searchHasMore = false;
+    let searchLastRows = 0;
     let latestSchema = null;
     let activeView = "main";
     let ingestorLoaded = false;
@@ -1615,6 +1624,23 @@
       if (exportBtn) exportBtn.disabled = isLoading;
       const exportPdfBtn = $("export-pdf-summary");
       if (exportPdfBtn) exportPdfBtn.disabled = isLoading;
+      const prevBtn = $("search-prev");
+      if (prevBtn) prevBtn.disabled = isLoading || searchPage <= 1;
+      const nextBtn = $("search-next");
+      if (nextBtn) nextBtn.disabled = isLoading || !searchHasMore;
+    }
+
+    function updateSearchPaginationMeta() {
+      const info = $("search-page-info");
+      if (!info) return;
+      const pageLabel = Number.isFinite(searchPage) && searchPage > 0 ? searchPage : 1;
+      const pageSizeLabel = Number.isFinite(searchPageSize) && searchPageSize > 0 ? searchPageSize : 0;
+      const rowsLabel = Number.isFinite(searchLastRows) && searchLastRows >= 0 ? searchLastRows : 0;
+      info.textContent = `Page ${pageLabel} | Rows on page: ${rowsLabel} | Page size: ${pageSizeLabel}`;
+      const prevBtn = $("search-prev");
+      if (prevBtn) prevBtn.disabled = pageLabel <= 1;
+      const nextBtn = $("search-next");
+      if (nextBtn) nextBtn.disabled = !searchHasMore;
     }
 
     function setSearchLoadingPhase(token, text) {
@@ -2720,6 +2746,7 @@
     }
 
     function buildSearchRequestFromForm() {
+      const limitValue = Number.parseInt($("limit").value, 10) || 200;
       const req = {
         time_from: inputToIso("time-from"),
         time_to: inputToIso("time-to"),
@@ -2736,7 +2763,7 @@
           device: normalizeFilterValue("f-device"),
           department: normalizeFilterValue("f-dept"),
         },
-        limit: Number.parseInt($("limit").value, 10) || 200,
+        limit: limitValue,
       };
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
@@ -2746,8 +2773,9 @@
       return req;
     }
 
-    async function runSearch() {
+    async function runSearch(options = {}) {
       setMessage("search-msg", "");
+      const resetPage = options && options.resetPage === true;
       const req = buildSearchRequestFromForm();
       if (!req.time_from || !req.time_to) {
         setMessage("search-msg", "Please provide valid from/to timestamps.");
@@ -2755,10 +2783,14 @@
         setSearchLoading(false);
         return;
       }
+      searchPageSize = Number.parseInt($("limit").value, 10) || req.limit || 200;
+      if (resetPage) {
+        searchPage = 1;
+      }
       const loadingToken = ++activeSearchLoadingToken;
       setSearchLoadingPhase(loadingToken, "Querying parquet data...");
       const displayColumns = resolveSearchDisplayColumns(req);
-      const queryReq = buildSearchQueryRequest(req, displayColumns);
+      const queryReq = buildSearchQueryRequest(req, displayColumns, searchPage, searchPageSize);
       try {
         const renderToken = ++latestSearchRenderToken;
         const startedAt = performance.now();
@@ -2820,15 +2852,22 @@
       return null;
     }
 
-    function buildSearchQueryRequest(req, displayColumns) {
+    function buildSearchQueryRequest(req, displayColumns, page, pageSize) {
+      const normalizedPage = Number.isFinite(page) ? Math.max(1, Number(page)) : 1;
+      const normalizedPageSize = Number.isFinite(pageSize) ? Math.max(1, Number(pageSize)) : (Number(req.limit) || 200);
+      const base = {
+        ...req,
+        page: normalizedPage,
+        page_size: normalizedPageSize,
+      };
       if (!Array.isArray(displayColumns) || displayColumns.length === 0) {
-        return req;
+        return base;
       }
       const extras = availableEnhancementColumns(displayColumns);
       if (extras.length === 0) {
-        return { ...req, columns: displayColumns.slice() };
+        return { ...base, columns: displayColumns.slice() };
       }
-      return { ...req, columns: [...displayColumns, ...extras] };
+      return { ...base, columns: [...displayColumns, ...extras] };
     }
 
     function availableEnhancementColumns(existingColumns) {
@@ -3628,10 +3667,17 @@
 
     function renderSearchResult(result, renderToken, metrics = null, displayColumns = null) {
       const rows = result.rows || [];
+      searchPage = Number(result.page || searchPage || 1);
+      searchPageSize = Number(result.page_size || searchPageSize || 200);
+      searchHasMore = Boolean(result.has_more);
+      searchLastRows = Array.isArray(rows) ? rows.length : 0;
+      updateSearchPaginationMeta();
       const parts = [
         `Rows: ${result.row_count}`,
         `Truncated: ${result.truncated ? "yes" : "no"}`,
       ];
+      parts.push(`Page: ${searchPage}`);
+      parts.push(`Has more: ${searchHasMore ? "yes" : "no"}`);
       if (metrics && Number.isFinite(metrics.fetchMs)) {
         parts.push(`Search API: ${metrics.fetchMs.toFixed(0)} ms`);
       }
@@ -3639,6 +3685,8 @@
       const host = $("results");
       host.innerHTML = "";
       if (rows.length === 0) {
+        searchLastRows = 0;
+        updateSearchPaginationMeta();
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
         renderSearchResultTables([]);
         if (renderToken === latestSearchRenderToken) {
@@ -4080,6 +4128,7 @@
       toggleAuthUi();
       populatePolicyReasonOptions();
       resetSupportSummary();
+      updateSearchPaginationMeta();
       bindMapControlButtons();
 
       const now = new Date();
@@ -4201,7 +4250,29 @@
       });
       $("search-form").addEventListener("submit", async (e) => {
         e.preventDefault();
-        try { await runSearch(); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
+        try { await runSearch({ resetPage: true }); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
+      });
+      $("search-prev").addEventListener("click", async () => {
+        if (searchPage <= 1) return;
+        searchPage -= 1;
+        try {
+          await runSearch();
+        } catch (err) {
+          searchPage += 1;
+          updateSearchPaginationMeta();
+          setMessage("search-msg", err.message || "Search page failed");
+        }
+      });
+      $("search-next").addEventListener("click", async () => {
+        if (!searchHasMore) return;
+        searchPage += 1;
+        try {
+          await runSearch();
+        } catch (err) {
+          searchPage -= 1;
+          updateSearchPaginationMeta();
+          setMessage("search-msg", err.message || "Search page failed");
+        }
       });
       $("export-csv").addEventListener("click", async () => {
         try { await exportCsv(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }

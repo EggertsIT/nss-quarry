@@ -560,6 +560,9 @@ mod tests {
             rows: vec![],
             row_count: 0,
             truncated: false,
+            page: 1,
+            page_size: 200,
+            has_more: false,
         };
         let bytes =
             build_support_summary_pdf(&summary, &search_result, &FieldMap::default(), "tester")
@@ -616,6 +619,9 @@ mod tests {
             ],
             row_count: 2,
             truncated: false,
+            page: 1,
+            page_size: 200,
+            has_more: false,
         };
         let bytes =
             build_support_summary_pdf(&summary, &search_result, &FieldMap::default(), "tester")

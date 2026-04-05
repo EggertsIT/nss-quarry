@@ -927,6 +927,8 @@ async fn build_support_summary_search_request(
 
     let mut req = search.clone();
     req.columns = Some(columns);
+    req.page = None;
+    req.page_size = None;
     Ok(req)
 }
 
