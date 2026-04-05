@@ -2596,7 +2596,29 @@
     async function refreshSearchEnhancements(req, result, renderToken) {
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       if (renderToken !== latestSearchRenderToken) return;
-      const rows = Array.isArray(result?.rows) ? result.rows : [];
+      let rows = Array.isArray(result?.rows) ? result.rows : [];
+      if (rows.length > 0) {
+        const requiredCols = requiredEnhancementColumns();
+        const missingCols = missingRowColumns(rows, requiredCols);
+        if (missingCols.length > 0) {
+          try {
+            const enhancementReq = {
+              ...req,
+              columns: requiredCols,
+            };
+            const enhancementResult = await apiFetch("/api/search", {
+              method: "POST",
+              body: enhancementReq,
+            });
+            if (renderToken !== latestSearchRenderToken) return;
+            if (Array.isArray(enhancementResult?.rows)) {
+              rows = enhancementResult.rows;
+            }
+          } catch (err) {
+            console.warn("search enhancement fetch failed", err);
+          }
+        }
+      }
       renderSearchInsights(rows);
       if (renderToken !== latestSearchRenderToken) return;
       try {
@@ -2608,7 +2630,9 @@
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (renderToken !== latestSearchRenderToken) return;
       try {
-        renderSearchSankey(rows);
+        if (typeof renderSearchSankey === "function") {
+          renderSearchSankey(rows);
+        }
       } catch (err) {
         console.warn("search sankey render failed", err);
       }
@@ -2620,6 +2644,26 @@
       }
       const hit = latestSchema.fields.find((f) => f && f.name === key && f.mapped_from);
       return hit && hit.mapped_from ? String(hit.mapped_from) : fallback;
+    }
+
+    function requiredEnhancementColumns() {
+      const values = [
+        mappedFieldName("source_country_field", "srcip_country"),
+        mappedFieldName("destination_country_field", "dstip_country"),
+        mappedFieldName("response_code_field", "respcode"),
+        mappedFieldName("response_size_field", "respsize"),
+        mappedFieldName("reason_field", "reason"),
+        mappedFieldName("destination_ip_field", "sip"),
+        mappedFieldName("host_field", "host"),
+        mappedFieldName("url_field", "url"),
+      ];
+      return Array.from(new Set(values.map((v) => String(v || "").trim()).filter((v) => v.length > 0)));
+    }
+
+    function missingRowColumns(rows, requiredColumns) {
+      if (!Array.isArray(rows) || rows.length === 0) return requiredColumns.slice();
+      const first = rows[0] || {};
+      return requiredColumns.filter((col) => !Object.prototype.hasOwnProperty.call(first, col));
     }
 
     async function renderSearchFlowMap(rows) {
@@ -3038,7 +3082,9 @@
         if (renderToken === latestSearchRenderToken) {
           renderSearchInsights([]);
           void renderSearchFlowMap([]);
-          renderSearchSankey([]);
+          if (typeof renderSearchSankey === "function") {
+            renderSearchSankey([]);
+          }
           resetSupportSummary("No rows returned for the current search.");
         }
         return;
