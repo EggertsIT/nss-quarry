@@ -1259,18 +1259,16 @@ fn apply_multi_exact_filter(where_clauses: &mut Vec<String>, column: &str, value
         return;
     }
 
-    let predicates = values
+    let lowered_values = values
         .iter()
-        .map(|v| {
-            format!(
-                "LOWER(CAST({} AS VARCHAR)) = LOWER('{}')",
-                ident(column),
-                escape_sql_literal(v)
-            )
-        })
+        .map(|v| format!("'{}'", escape_sql_literal(&v.to_lowercase())))
         .collect::<Vec<_>>();
 
-    where_clauses.push(format!("({})", predicates.join(" OR ")));
+    where_clauses.push(format!(
+        "LOWER(CAST({} AS VARCHAR)) IN ({})",
+        ident(column),
+        lowered_values.join(", ")
+    ));
 }
 
 fn apply_contains_or_multi_exact_filter(
@@ -1974,9 +1972,7 @@ mod tests {
             "read_parquet(['/tmp/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)";
         let sql = build_search_sql(&columns, &req, &fields, src, 50, 0);
 
-        assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('1.1.1.1')"));
-        assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) = LOWER('8.8.8.8')"));
-        assert!(sql.contains(" OR "));
+        assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) IN ('1.1.1.1', '8.8.8.8')"));
     }
 
     #[test]
