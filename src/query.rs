@@ -1314,7 +1314,7 @@ fn build_search_sql(
         .join(", ");
 
     let mut where_clauses = vec![format!(
-        "CAST({time_col} AS TIMESTAMP) BETWEEN TIMESTAMP '{from}' AND TIMESTAMP '{to}'"
+        "CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from}' AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to}'"
     )];
     apply_filter(
         &mut where_clauses,
@@ -1740,7 +1740,15 @@ fn parquet_file_groups_for_range(
     }
     let mut groups = Vec::new();
     let mut cursor = floor_to_hour(from);
-    let end = floor_to_hour(to);
+    let end_floor = floor_to_hour(to);
+    let end = if to == end_floor {
+        end_floor - chrono::Duration::hours(1)
+    } else {
+        end_floor
+    };
+    if end < cursor {
+        return Ok(groups);
+    }
     while cursor <= end {
         let part_dir = root.join(format!(
             "dt={}/hour={:02}",
@@ -1779,7 +1787,15 @@ fn parquet_files_for_range(
     }
     let mut files = Vec::new();
     let mut cursor = floor_to_hour(from);
-    let end = floor_to_hour(to);
+    let end_floor = floor_to_hour(to);
+    let end = if to == end_floor {
+        end_floor - chrono::Duration::hours(1)
+    } else {
+        end_floor
+    };
+    if end < cursor {
+        return Ok(files);
+    }
     while cursor <= end {
         let part_dir = root.join(format!(
             "dt={}/hour={:02}",
@@ -1925,6 +1941,12 @@ mod tests {
         ));
         assert!(sql.contains("read_parquet(['/tmp/o''hare/dt=2026-04-01/hour=00/part-000001.parquet'], union_by_name=true)"));
         assert!(sql.contains("ORDER BY \"time\" DESC LIMIT 123"));
+        assert!(
+            sql.contains(
+                "CAST(\"time\" AS TIMESTAMP) >= TIMESTAMP '2026-04-01 00:00:00' AND CAST(\"time\" AS TIMESTAMP) < TIMESTAMP '2026-04-01 01:00:00'"
+            ),
+            "expected exclusive upper-bound timestamp filter"
+        );
 
         let escaped_url = escape_sql_literal("exa%m_ple'\\path");
         assert!(sql.contains("STRPOS(LOWER(CAST(\"login\" AS VARCHAR)), LOWER('alice')) > 0"));
@@ -1988,6 +2010,36 @@ mod tests {
         assert!(joined.contains("hour=00/part-000001.parquet"));
         assert!(joined.contains("hour=01/part-000001.parquet"));
         assert!(!joined.contains("hour=02/part-000001.parquet"));
+
+        std::fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn parquet_files_for_range_excludes_upper_hour_on_exact_boundary() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("nss-quarry-boundary-test-{unique}"));
+        let h00 = root.join("dt=2026-04-01").join("hour=00");
+        let h01 = root.join("dt=2026-04-01").join("hour=01");
+
+        std::fs::create_dir_all(&h00).expect("mkdir h00");
+        std::fs::create_dir_all(&h01).expect("mkdir h01");
+        std::fs::write(h00.join("part-000001.parquet"), b"").expect("touch h00 parquet");
+        std::fs::write(h01.join("part-000001.parquet"), b"").expect("touch h01 parquet");
+
+        let from = Utc.with_ymd_and_hms(2026, 4, 1, 0, 0, 0).unwrap();
+        let to = Utc.with_ymd_and_hms(2026, 4, 1, 1, 0, 0).unwrap();
+        let files = parquet_files_for_range(&root, from, to).expect("range files");
+
+        assert_eq!(
+            files.len(),
+            1,
+            "upper hour should be excluded when time_to is exact"
+        );
+        let only = files[0].display().to_string();
+        assert!(only.contains("hour=00/part-000001.parquet"));
 
         std::fs::remove_dir_all(root).expect("cleanup");
     }
