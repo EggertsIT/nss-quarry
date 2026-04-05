@@ -1214,7 +1214,8 @@
         <form id="search-form" class="form-grid">
           <div class="field-wide"><label for="time-from">From</label><input id="time-from" type="datetime-local" required></div>
           <div class="field-wide"><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
-          <div><label for="limit">Limit</label><input id="limit" type="number" min="1" max="2000" value="200"></div>
+          <div><label for="limit">Limit (max rows)</label><input id="limit" type="number" min="1" max="50000" value="5000"></div>
+          <div><label for="page-size">Page Size</label><input id="page-size" type="number" min="1" max="2000" value="200"></div>
           <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
           <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
           <div>
@@ -1636,7 +1637,10 @@
       const pageLabel = Number.isFinite(searchPage) && searchPage > 0 ? searchPage : 1;
       const pageSizeLabel = Number.isFinite(searchPageSize) && searchPageSize > 0 ? searchPageSize : 0;
       const rowsLabel = Number.isFinite(searchLastRows) && searchLastRows >= 0 ? searchLastRows : 0;
-      info.textContent = `Page ${pageLabel} | Rows on page: ${rowsLabel} | Page size: ${pageSizeLabel}`;
+      const limitLabel = latestSearchRequest && Number.isFinite(Number(latestSearchRequest.limit))
+        ? Number(latestSearchRequest.limit)
+        : 0;
+      info.textContent = `Page ${pageLabel} | Rows on page: ${rowsLabel} | Page size: ${pageSizeLabel} | Limit: ${limitLabel}`;
       const prevBtn = $("search-prev");
       if (prevBtn) prevBtn.disabled = pageLabel <= 1;
       const nextBtn = $("search-next");
@@ -2746,7 +2750,8 @@
     }
 
     function buildSearchRequestFromForm() {
-      const limitValue = Number.parseInt($("limit").value, 10) || 200;
+      const limitValue = Number.parseInt($("limit").value, 10) || 5000;
+      const pageSizeValue = Number.parseInt($("page-size").value, 10) || 200;
       const req = {
         time_from: inputToIso("time-from"),
         time_to: inputToIso("time-to"),
@@ -2764,6 +2769,7 @@
           department: normalizeFilterValue("f-dept"),
         },
         limit: limitValue,
+        page_size: pageSizeValue,
       };
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
@@ -2783,7 +2789,7 @@
         setSearchLoading(false);
         return;
       }
-      searchPageSize = Number.parseInt($("limit").value, 10) || req.limit || 200;
+      searchPageSize = Number.parseInt($("page-size").value, 10) || req.page_size || 200;
       if (resetPage) {
         searchPage = 1;
       }

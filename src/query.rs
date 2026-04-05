@@ -780,16 +780,19 @@ impl QueryService {
 
         let limit = req
             .limit
+            .unwrap_or(self.inner.max_rows)
+            .clamp(1, self.inner.max_rows);
+        let page_size = req
+            .page_size
             .unwrap_or(self.inner.default_limit)
             .clamp(1, self.inner.max_rows);
-        let page_size = req.page_size.unwrap_or(limit).clamp(1, limit);
-        let max_pages = self.inner.max_rows.div_ceil(page_size).max(1);
+        let max_pages = limit.div_ceil(page_size).max(1);
         let page = req.page.unwrap_or(1).clamp(1, max_pages);
         let start_index = (page - 1).saturating_mul(page_size);
         let collect_target = start_index
             .saturating_add(page_size)
             .saturating_add(1)
-            .min(self.inner.max_rows.saturating_add(1));
+            .min(limit.saturating_add(1));
 
         let groups =
             parquet_file_groups_for_range(&self.inner.parquet_root, req.time_from, req.time_to)?;
