@@ -1362,6 +1362,7 @@
     let currentUser = null;
     let latestSearchRequest = null;
     let latestPcapContext = null;
+    let latestSearchRenderToken = 0;
     let latestSchema = null;
     let activeView = "main";
     let ingestorLoaded = false;
@@ -2648,9 +2649,38 @@
         resetSupportSummary("Provide a valid search window to generate a support summary.");
         return;
       }
+      const renderToken = ++latestSearchRenderToken;
+      setMessage("support-summary-msg", "Refreshing support summary...");
       const result = await apiFetch("/api/search", { method: "POST", body: req });
-      await renderSearchResult(result);
-      await runSupportSummary(req);
+      renderSearchResult(result, renderToken);
+      void refreshSearchEnhancements(req, result, renderToken);
+    }
+
+    async function refreshSearchEnhancements(req, result, renderToken) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      if (renderToken !== latestSearchRenderToken) return;
+      const rows = Array.isArray(result?.rows) ? result.rows : [];
+      renderSearchInsights(rows);
+      if (renderToken !== latestSearchRenderToken) return;
+      try {
+        await renderSearchFlowMap(rows);
+      } catch (err) {
+        console.warn("search flow map render failed", err);
+      }
+      if (renderToken !== latestSearchRenderToken) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (renderToken !== latestSearchRenderToken) return;
+      try {
+        renderSearchSankey(rows);
+      } catch (err) {
+        console.warn("search sankey render failed", err);
+      }
+      if (renderToken !== latestSearchRenderToken) return;
+      try {
+        await runSupportSummary(req);
+      } catch (err) {
+        console.warn("support summary refresh failed", err);
+      }
     }
 
     function mappedFieldName(key, fallback) {
@@ -3316,16 +3346,19 @@
       }
     }
 
-    async function renderSearchResult(result) {
+    function renderSearchResult(result, renderToken) {
       const rows = result.rows || [];
       $("result-meta").textContent = `Rows: ${result.row_count} | Truncated: ${result.truncated ? "yes" : "no"}`;
       const host = $("results");
       host.innerHTML = "";
       if (rows.length === 0) {
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
-        renderSearchInsights([]);
-        await renderSearchFlowMap([]);
-        renderSearchSankey([]);
+        if (renderToken === latestSearchRenderToken) {
+          renderSearchInsights([]);
+          void renderSearchFlowMap([]);
+          renderSearchSankey([]);
+          resetSupportSummary("No rows returned for the current search.");
+        }
         return;
       }
       const columns = Object.keys(rows[0]);
@@ -3334,9 +3367,6 @@
         tableClass: "results-table",
         stickyColumns: ["time", "action"],
       }));
-      renderSearchInsights(rows);
-      await renderSearchFlowMap(rows);
-      renderSearchSankey(rows);
     }
 
     async function exportCsv() {
