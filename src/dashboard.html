@@ -349,6 +349,17 @@
       border-color: rgba(78, 143, 221, 0.38);
       background: linear-gradient(180deg, rgba(243, 249, 255, 0.96), rgba(234, 243, 255, 0.92));
     }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .section-header h3 {
+      margin: 0;
+    }
     .table-wrap {
       overflow: auto;
       border: 1px solid rgba(195, 214, 238, 0.98);
@@ -1117,10 +1128,6 @@
               <label>&nbsp;</label>
               <button type="submit" class="primary">Run Search</button>
             </div>
-            <div>
-              <label>&nbsp;</label>
-              <button id="export-csv" type="button" class="ghost">Export CSV</button>
-            </div>
           </div>
         </form>
         <div id="search-msg" class="message"></div>
@@ -1164,7 +1171,10 @@
       </div>
 
       <div class="panel panel-full-bleed" style="margin-top: 14px;">
-        <h3>Search Results</h3>
+        <div class="section-header">
+          <h3>Search Results</h3>
+          <button id="export-csv" type="button" class="ghost">Export Logs (CSV)</button>
+        </div>
         <div class="muted" id="result-meta"></div>
         <div id="results" class="table-wrap results-table-wrap" style="margin-top: 8px;"></div>
       </div>
