@@ -379,6 +379,8 @@ Filter object keys:
 - `category`
 - `source_ip` or alias `cip`
 - `server_ip` or alias `sip`
+- `source_country`
+- `destination_country`
 - `device`
 - `department`
 
@@ -387,6 +389,8 @@ Filter semantics:
 - `response_code`: substring match for one value, exact OR match for comma-separated values
 - `source_ip`: substring match for one value, exact OR match for comma-separated values
 - `server_ip`: exact OR match for comma-separated values
+- `source_country`: substring match for one value, exact OR match for comma-separated values
+- `destination_country`: substring match for one value, exact OR match for comma-separated values
 
 Limits and behavior:
 - request range must not exceed `query.max_days_per_query`
@@ -447,6 +451,82 @@ Example response:
   ],
   "truncated": false
 }
+```
+
+### Investigation Workspace (M1)
+
+M1 adds server-side case sessions with TTL and evidence pinning. Sessions are owner-scoped; admins can access any session.
+
+Session fields include:
+- `id`, `created_at`, `updated_at`, `expires_at`, `owner`
+- `search` (full search request state)
+- `pivots` (ordered list of `{id, field, value, created_at}`)
+- `pinned_items` (evidence basket rows)
+
+#### `POST /api/investigations`
+
+Create a session from the current query.
+
+```python
+payload = {"search": search_payload}
+session_obj = require_ok(session.post(f"{BASE_URL}/api/investigations", json=payload)).json()
+print(session_obj["id"])
+```
+
+#### `GET /api/investigations/{id}`
+
+Load an existing session.
+
+```python
+loaded = require_ok(session.get(f"{BASE_URL}/api/investigations/{session_id}")).json()
+```
+
+#### `PATCH /api/investigations/{id}`
+
+Update paging/filters/columns/time window and/or pivots.
+
+```python
+patch = {
+    "page": 1,
+    "page_size": 200,
+    "filters": {"server_ip": "8.8.8.8"},
+    "pivots": [
+        {"field": "reason", "value": "Not allowed to browse this category"},
+        {"field": "respcode", "value": "403"},
+    ],
+}
+updated = require_ok(session.patch(f"{BASE_URL}/api/investigations/{session_id}", json=patch)).json()
+```
+
+#### `POST /api/investigations/{id}/pin`
+
+Pin one result row to the evidence basket.
+
+```python
+pin_payload = {"row": {"time": "2026-04-04 19:03:44", "sip": "8.8.8.8", "reason": "Not allowed to browse this category"}, "note": "User complaint match"}
+updated = require_ok(session.post(f"{BASE_URL}/api/investigations/{session_id}/pin", json=pin_payload)).json()
+```
+
+#### `DELETE /api/investigations/{id}/pin/{item_id}`
+
+Remove one pinned evidence row.
+
+```python
+updated = require_ok(session.delete(f"{BASE_URL}/api/investigations/{session_id}/pin/{item_id}")).json()
+```
+
+#### `POST /api/investigations/{id}/export`
+
+Export a bundled investigation package as JSON:
+- session metadata
+- pivots
+- pinned evidence
+- support summary
+- CSV content
+
+```python
+pkg = require_ok(session.post(f"{BASE_URL}/api/investigations/{session_id}/export")).json()
+Path(f"nss-quarry-investigation-{session_id}.json").write_text(json.dumps(pkg, indent=2))
 ```
 
 ### `POST /api/summary/support`

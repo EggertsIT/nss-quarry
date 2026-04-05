@@ -47,6 +47,8 @@ pub struct SearchFilters {
     pub source_ip: Option<String>,
     #[serde(alias = "sip")]
     pub server_ip: Option<String>,
+    pub source_country: Option<String>,
+    pub destination_country: Option<String>,
     pub device: Option<String>,
     pub department: Option<String>,
 }
@@ -306,4 +308,76 @@ pub struct ApiTokenUpdateRequest {
     #[serde(default)]
     pub allowed_sources: Vec<String>,
     pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationPivot {
+    pub id: String,
+    pub field: String,
+    pub value: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationPinnedItem {
+    pub id: String,
+    pub pinned_at: DateTime<Utc>,
+    pub note: Option<String>,
+    pub row: serde_json::Map<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationSession {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub owner: String,
+    pub search: SearchRequest,
+    #[serde(default)]
+    pub pivots: Vec<InvestigationPivot>,
+    #[serde(default)]
+    pub pinned_items: Vec<InvestigationPinnedItem>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationCreateRequest {
+    pub search: SearchRequest,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationPivotInput {
+    pub field: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationUpdateRequest {
+    pub time_from: Option<DateTime<Utc>>,
+    pub time_to: Option<DateTime<Utc>>,
+    pub filters: Option<SearchFilters>,
+    pub columns: Option<Vec<String>>,
+    pub limit: Option<u32>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+    pub pivots: Option<Vec<InvestigationPivotInput>>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvestigationPinRequest {
+    pub row: serde_json::Map<String, serde_json::Value>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InvestigationExportResponse {
+    pub investigation_id: String,
+    pub exported_at: DateTime<Utc>,
+    pub owner: String,
+    pub query: SearchRequest,
+    pub pivots: Vec<InvestigationPivot>,
+    pub pinned_items: Vec<InvestigationPinnedItem>,
+    pub summary: SupportSummaryResponse,
+    pub csv: String,
+    pub csv_filename: String,
 }

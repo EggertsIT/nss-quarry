@@ -657,6 +657,137 @@
       table-layout: auto;
       min-width: 100%;
     }
+    .results-table td .pivot-link {
+      display: inline-block;
+      width: 100%;
+      text-align: left;
+      border: none;
+      background: none;
+      color: var(--ink-strong);
+      padding: 0;
+      margin: 0;
+      font: inherit;
+      cursor: pointer;
+      text-overflow: ellipsis;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .results-table td .pivot-link:hover {
+      color: var(--accent-strong);
+      text-decoration: underline;
+    }
+    .results-table .row-action-cell {
+      width: 72px;
+      text-align: center;
+    }
+    .row-action-btn {
+      border: 1px solid rgba(162, 190, 223, 0.95);
+      border-radius: 10px;
+      background: rgba(245, 251, 255, 0.95);
+      color: var(--navy);
+      font-size: 0.78rem;
+      font-weight: 700;
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .row-action-btn:hover {
+      background: rgba(231, 243, 255, 0.96);
+    }
+    .investigation-shell {
+      display: grid;
+      gap: 12px;
+    }
+    .investigation-header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .investigation-header input {
+      min-width: 280px;
+      flex: 1 1 280px;
+    }
+    .investigation-meta {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+    .pivot-chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .pivot-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid rgba(174, 202, 234, 0.95);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: linear-gradient(180deg, rgba(252, 254, 255, 0.98), rgba(236, 245, 255, 0.95));
+      color: var(--navy);
+      max-width: 100%;
+    }
+    .pivot-chip strong {
+      font-size: 0.74rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+    .pivot-chip span {
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pivot-chip button {
+      border: none;
+      background: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 0.8rem;
+      padding: 0 2px;
+      line-height: 1;
+    }
+    .pivot-chip button:hover {
+      color: var(--accent-strong);
+    }
+    .evidence-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .evidence-item {
+      border: 1px solid rgba(188, 210, 233, 0.82);
+      border-radius: 12px;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(243, 249, 255, 0.92));
+      padding: 10px;
+    }
+    .evidence-item-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .evidence-item-title {
+      font-weight: 700;
+      font-size: 0.84rem;
+      color: var(--ink-strong);
+    }
+    .evidence-item-note {
+      margin-bottom: 6px;
+      font-size: 0.82rem;
+      color: var(--ink);
+      line-height: 1.4;
+    }
+    .evidence-item-row {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.76rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .results-table th,
     .results-table td {
       padding: 10px 12px;
@@ -1236,6 +1367,8 @@
           <div><label for="f-category">Category</label><input id="f-category" placeholder="Spyware Callback"></div>
           <div><label for="f-ip">CIP (Source IP)</label><input id="f-ip" placeholder="10.0.0.5"></div>
           <div><label for="f-sip">SIP (Destination IP)</label><input id="f-sip" placeholder="1.1.1.1, 8.8.8.8"></div>
+          <div><label for="f-src-country">Source Country</label><input id="f-src-country" placeholder="Germany"></div>
+          <div><label for="f-dst-country">Destination Country</label><input id="f-dst-country" placeholder="United States"></div>
           <div><label for="f-device">Device</label><input id="f-device" placeholder="LAPTOP-123"></div>
           <div><label for="f-dept">Department</label><input id="f-dept" placeholder="IT"></div>
           <div><label for="columns">Columns (comma-separated, optional)</label><input id="columns" placeholder="time,action,url,login,cip"></div>
@@ -1250,6 +1383,24 @@
         <div id="search-loading" class="search-loading hidden" role="status" aria-live="polite">
           <span class="search-spinner" aria-hidden="true"></span>
           <span id="search-loading-text">Searching logs...</span>
+        </div>
+      </div>
+
+      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+        <h3>Investigation Session</h3>
+        <div class="investigation-shell">
+          <div class="investigation-header">
+            <button id="investigation-create" type="button" class="primary">Create Session</button>
+            <input id="investigation-id-input" placeholder="Load investigation session by ID">
+            <button id="investigation-load" type="button" class="ghost">Load</button>
+            <button id="investigation-export" type="button" class="ghost">Export Investigation Package</button>
+          </div>
+          <div id="investigation-msg" class="message"></div>
+          <div id="investigation-meta" class="investigation-meta muted">No active investigation session.</div>
+          <div>
+            <div class="muted" style="margin-bottom:6px;">Pivot Filters</div>
+            <div id="pivot-chip-list" class="pivot-chip-list muted">No pivot filters yet.</div>
+          </div>
         </div>
       </div>
 
@@ -1333,6 +1484,12 @@
             <div id="search-table-country-flow" class="table-wrap"></div>
           </div>
         </div>
+      </div>
+
+      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+        <h3>Evidence Basket</h3>
+        <div id="evidence-msg" class="message"></div>
+        <div id="evidence-list" class="evidence-list muted">No pinned evidence rows.</div>
       </div>
       </div>
 
@@ -1466,7 +1623,25 @@
     let auditPage = 1;
     let auditTotalPages = 0;
     const auditPageSize = 50;
+    let activeInvestigation = null;
+    let latestSearchRowsData = [];
     const mapViewState = {};
+    const PIVOTABLE_FIELDS = new Set([
+      "sip",
+      "server_ip",
+      "reason",
+      "respcode",
+      "response_code",
+      "login",
+      "user",
+      "devicehostname",
+      "deviceowner",
+      "device",
+      "srcip_country",
+      "source_country",
+      "dstip_country",
+      "destination_country",
+    ]);
     const POLICY_REASON_OPTIONS = [
       "Access denied due to bad server certificate",
       "Access denied due to low TLS version",
@@ -1629,6 +1804,12 @@
       if (exportBtn) exportBtn.disabled = isLoading;
       const exportPdfBtn = $("export-pdf-summary");
       if (exportPdfBtn) exportPdfBtn.disabled = isLoading;
+      const invCreate = $("investigation-create");
+      if (invCreate) invCreate.disabled = isLoading;
+      const invLoad = $("investigation-load");
+      if (invLoad) invLoad.disabled = isLoading;
+      const invExport = $("investigation-export");
+      if (invExport) invExport.disabled = isLoading;
       const prevBtn = $("search-prev");
       if (prevBtn) prevBtn.disabled = isLoading || searchPage <= 1;
       const nextBtn = $("search-next");
@@ -2769,6 +2950,8 @@
           category: normalizeFilterValue("f-category"),
           source_ip: normalizeFilterValue("f-ip"),
           server_ip: normalizeFilterValue("f-sip"),
+          source_country: normalizeFilterValue("f-src-country"),
+          destination_country: normalizeFilterValue("f-dst-country"),
           device: normalizeFilterValue("f-device"),
           department: normalizeFilterValue("f-dept"),
         },
@@ -2781,6 +2964,365 @@
       }
       latestSearchRequest = req;
       return req;
+    }
+
+    function setInputValue(id, value) {
+      const el = $(id);
+      if (!el) return;
+      el.value = value == null ? "" : String(value);
+    }
+
+    function clearPivotMappedInputs() {
+      for (const id of ["f-sip", "f-reason", "f-respcode", "f-user", "f-device", "f-src-country", "f-dst-country"]) {
+        setInputValue(id, "");
+      }
+    }
+
+    function pivotFieldBinding(field) {
+      const key = String(field || "").trim().toLowerCase();
+      if (key === "sip" || key === "server_ip") return { inputId: "f-sip", multi: true };
+      if (key === "reason") return { inputId: "f-reason", multi: false };
+      if (key === "respcode" || key === "response_code") return { inputId: "f-respcode", multi: true };
+      if (key === "login" || key === "user") return { inputId: "f-user", multi: false };
+      if (key === "devicehostname" || key === "deviceowner" || key === "device") return { inputId: "f-device", multi: false };
+      if (key === "srcip_country" || key === "source_country") return { inputId: "f-src-country", multi: true };
+      if (key === "dstip_country" || key === "destination_country") return { inputId: "f-dst-country", multi: true };
+      return null;
+    }
+
+    function pivotInputs(session) {
+      const pivots = Array.isArray(session?.pivots) ? session.pivots : [];
+      return pivots.map((pivot) => ({ field: String(pivot.field || "").trim(), value: String(pivot.value || "").trim() }))
+        .filter((pivot) => pivot.field && pivot.value);
+    }
+
+    function applyPivotsToForm(session) {
+      const pivots = Array.isArray(session?.pivots) ? session.pivots : [];
+      clearPivotMappedInputs();
+      const grouped = new Map();
+      for (const pivot of pivots) {
+        const binding = pivotFieldBinding(pivot.field);
+        if (!binding) continue;
+        const value = String(pivot.value || "").trim();
+        if (!value) continue;
+        if (!grouped.has(binding.inputId)) {
+          grouped.set(binding.inputId, { multi: binding.multi, values: [] });
+        }
+        grouped.get(binding.inputId).values.push(value);
+      }
+      for (const [inputId, state] of grouped.entries()) {
+        const ordered = Array.from(new Set(state.values));
+        const joined = state.multi ? ordered.join(", ") : ordered[ordered.length - 1];
+        setInputValue(inputId, joined);
+      }
+    }
+
+    function applySessionToForm(session) {
+      const search = session && session.search ? session.search : null;
+      if (!search) return;
+      activeInvestigation = session;
+      $("investigation-id-input").value = session.id || "";
+      if (search.time_from) {
+        const from = new Date(search.time_from);
+        if (!Number.isNaN(from.getTime())) $("time-from").value = toLocalInputValue(from);
+      }
+      if (search.time_to) {
+        const to = new Date(search.time_to);
+        if (!Number.isNaN(to.getTime())) $("time-to").value = toLocalInputValue(to);
+      }
+      setInputValue("limit", search.limit != null ? String(search.limit) : "5000");
+      setInputValue("page-size", search.page_size != null ? String(search.page_size) : "200");
+      const filters = search.filters || {};
+      setInputValue("f-user", filters.user || "");
+      setInputValue("f-url", filters.url || "");
+      setInputValue("f-action", filters.action || "");
+      setInputValue("f-respcode", filters.response_code || "");
+      setInputValue("f-reason", filters.reason || "");
+      setInputValue("f-threat", filters.threat || "");
+      setInputValue("f-category", filters.category || "");
+      setInputValue("f-ip", filters.source_ip || "");
+      setInputValue("f-sip", filters.server_ip || "");
+      setInputValue("f-src-country", filters.source_country || "");
+      setInputValue("f-dst-country", filters.destination_country || "");
+      setInputValue("f-device", filters.device || "");
+      setInputValue("f-dept", filters.department || "");
+      setInputValue("columns", Array.isArray(search.columns) ? search.columns.join(", ") : "");
+      if (Array.isArray(session.pivots) && session.pivots.length > 0) {
+        applyPivotsToForm(session);
+      }
+      renderInvestigationMeta();
+      renderPivotChips();
+      renderEvidenceBasket();
+    }
+
+    function renderInvestigationMeta() {
+      const host = $("investigation-meta");
+      if (!activeInvestigation) {
+        host.textContent = "No active investigation session.";
+        return;
+      }
+      const session = activeInvestigation;
+      const updated = session.updated_at ? formatDashboardTimestamp(session.updated_at) : "unknown";
+      const expires = session.expires_at ? formatDashboardTimestamp(session.expires_at) : "unknown";
+      host.textContent = `Session ${session.id} | Owner: ${session.owner} | Updated: ${updated} | Expires: ${expires} | Pivots: ${(session.pivots || []).length} | Pins: ${(session.pinned_items || []).length}`;
+    }
+
+    function renderPivotChips() {
+      const host = $("pivot-chip-list");
+      host.innerHTML = "";
+      if (!activeInvestigation || !Array.isArray(activeInvestigation.pivots) || activeInvestigation.pivots.length === 0) {
+        host.classList.add("muted");
+        host.textContent = "No pivot filters yet.";
+        return;
+      }
+      host.classList.remove("muted");
+      activeInvestigation.pivots.forEach((pivot, index) => {
+        const chip = document.createElement("div");
+        chip.className = "pivot-chip";
+        const label = document.createElement("strong");
+        label.textContent = pivot.field;
+        const value = document.createElement("span");
+        value.textContent = String(pivot.value || "");
+        value.title = String(pivot.value || "");
+        const up = document.createElement("button");
+        up.type = "button";
+        up.title = "Move pivot left";
+        up.textContent = "←";
+        up.disabled = index === 0;
+        up.addEventListener("click", () => movePivot(index, index - 1));
+        const down = document.createElement("button");
+        down.type = "button";
+        down.title = "Move pivot right";
+        down.textContent = "→";
+        down.disabled = index >= activeInvestigation.pivots.length - 1;
+        down.addEventListener("click", () => movePivot(index, index + 1));
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.title = "Remove pivot";
+        remove.textContent = "×";
+        remove.addEventListener("click", () => removePivot(index));
+        chip.appendChild(label);
+        chip.appendChild(value);
+        chip.appendChild(up);
+        chip.appendChild(down);
+        chip.appendChild(remove);
+        host.appendChild(chip);
+      });
+    }
+
+    function evidenceRowPreview(row) {
+      if (!row || typeof row !== "object") return "";
+      const keys = Object.keys(row).slice(0, 4);
+      return keys.map((key) => `${key}=${String(row[key] ?? "")}`).join(" | ");
+    }
+
+    function renderEvidenceBasket() {
+      const host = $("evidence-list");
+      host.innerHTML = "";
+      if (!activeInvestigation || !Array.isArray(activeInvestigation.pinned_items) || activeInvestigation.pinned_items.length === 0) {
+        host.classList.add("muted");
+        host.textContent = "No pinned evidence rows.";
+        return;
+      }
+      host.classList.remove("muted");
+      for (const item of activeInvestigation.pinned_items) {
+        const card = document.createElement("div");
+        card.className = "evidence-item";
+        const top = document.createElement("div");
+        top.className = "evidence-item-top";
+        const title = document.createElement("div");
+        title.className = "evidence-item-title";
+        title.textContent = `Pinned ${formatDashboardTimestamp(item.pinned_at)}`;
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "ghost";
+        remove.textContent = "Unpin";
+        remove.addEventListener("click", async () => {
+          try {
+            await removePinnedEvidence(item.id);
+          } catch (err) {
+            setMessage("evidence-msg", err.message || "Failed to unpin evidence row.");
+          }
+        });
+        top.appendChild(title);
+        top.appendChild(remove);
+        card.appendChild(top);
+        if (item.note) {
+          const note = document.createElement("div");
+          note.className = "evidence-item-note";
+          note.textContent = item.note;
+          card.appendChild(note);
+        }
+        const rowPreview = document.createElement("div");
+        rowPreview.className = "evidence-item-row";
+        rowPreview.textContent = evidenceRowPreview(item.row);
+        rowPreview.title = JSON.stringify(item.row || {});
+        card.appendChild(rowPreview);
+        host.appendChild(card);
+      }
+    }
+
+    async function createInvestigationSession() {
+      const req = buildSearchRequestFromForm();
+      if (!req.time_from || !req.time_to) {
+        throw new Error("Provide valid from/to time before creating an investigation session.");
+      }
+      const session = await apiFetch("/api/investigations", {
+        method: "POST",
+        body: { search: req },
+      });
+      applySessionToForm(session);
+      setMessage("investigation-msg", `Investigation session ${session.id} created.`, true);
+      return session;
+    }
+
+    async function ensureInvestigationSession() {
+      if (activeInvestigation && activeInvestigation.id) {
+        return activeInvestigation;
+      }
+      return createInvestigationSession();
+    }
+
+    async function loadInvestigationSession() {
+      const id = $("investigation-id-input").value.trim();
+      if (!id) {
+        throw new Error("Provide an investigation session ID.");
+      }
+      const session = await apiFetch(`/api/investigations/${encodeURIComponent(id)}`, { method: "GET" });
+      applySessionToForm(session);
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("investigation-msg", `Investigation session ${session.id} loaded.`, true);
+    }
+
+    async function patchActiveInvestigation(patch, message = "") {
+      if (!activeInvestigation || !activeInvestigation.id) {
+        return null;
+      }
+      const session = await apiFetch(`/api/investigations/${encodeURIComponent(activeInvestigation.id)}`, {
+        method: "PATCH",
+        body: patch,
+      });
+      activeInvestigation = session;
+      renderInvestigationMeta();
+      renderPivotChips();
+      renderEvidenceBasket();
+      if (message) {
+        setMessage("investigation-msg", message, true);
+      }
+      return session;
+    }
+
+    async function movePivot(fromIndex, toIndex) {
+      if (!activeInvestigation || !Array.isArray(activeInvestigation.pivots)) return;
+      if (fromIndex < 0 || toIndex < 0 || fromIndex >= activeInvestigation.pivots.length || toIndex >= activeInvestigation.pivots.length) {
+        return;
+      }
+      const pivots = activeInvestigation.pivots.slice();
+      const [pivot] = pivots.splice(fromIndex, 1);
+      pivots.splice(toIndex, 0, pivot);
+      await patchActiveInvestigation({
+        pivots: pivots.map((entry) => ({ field: entry.field, value: entry.value })),
+      });
+      applyPivotsToForm(activeInvestigation);
+      await runSearch({ resetPage: true });
+    }
+
+    async function removePivot(index) {
+      if (!activeInvestigation || !Array.isArray(activeInvestigation.pivots)) return;
+      const pivots = activeInvestigation.pivots.slice();
+      if (index < 0 || index >= pivots.length) return;
+      pivots.splice(index, 1);
+      await patchActiveInvestigation({
+        pivots: pivots.map((entry) => ({ field: entry.field, value: entry.value })),
+      });
+      applyPivotsToForm(activeInvestigation);
+      await runSearch({ resetPage: true });
+    }
+
+    async function addPivot(field, value) {
+      const normalizedField = String(field || "").trim();
+      const normalizedValue = String(value || "").trim();
+      if (!normalizedField || !normalizedValue) return;
+      await ensureInvestigationSession();
+      const existing = Array.isArray(activeInvestigation.pivots) ? activeInvestigation.pivots.slice() : [];
+      const duplicate = existing.some((pivot) =>
+        String(pivot.field || "").toLowerCase() === normalizedField.toLowerCase()
+        && String(pivot.value || "") === normalizedValue
+      );
+      if (!duplicate) {
+        existing.push({ field: normalizedField, value: normalizedValue });
+      }
+      await patchActiveInvestigation(
+        { pivots: existing.map((entry) => ({ field: entry.field, value: entry.value })), page: 1 },
+        duplicate
+          ? `Pivot already exists: ${normalizedField}=${normalizedValue}`
+          : `Pivot added: ${normalizedField}=${normalizedValue}`
+      );
+      applyPivotsToForm(activeInvestigation);
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+    }
+
+    async function pinEvidenceRow(row) {
+      await ensureInvestigationSession();
+      const note = window.prompt("Optional evidence note (leave empty for none):", "") || "";
+      const session = await apiFetch(`/api/investigations/${encodeURIComponent(activeInvestigation.id)}/pin`, {
+        method: "POST",
+        body: {
+          row,
+          note: note.trim().length > 0 ? note.trim() : null,
+        },
+      });
+      activeInvestigation = session;
+      renderInvestigationMeta();
+      renderEvidenceBasket();
+      setMessage("evidence-msg", "Row pinned to evidence basket.", true);
+    }
+
+    async function removePinnedEvidence(itemId) {
+      if (!activeInvestigation || !activeInvestigation.id) return;
+      const session = await apiFetch(
+        `/api/investigations/${encodeURIComponent(activeInvestigation.id)}/pin/${encodeURIComponent(itemId)}`,
+        { method: "DELETE" }
+      );
+      activeInvestigation = session;
+      renderInvestigationMeta();
+      renderEvidenceBasket();
+      setMessage("evidence-msg", "Evidence row removed.", true);
+    }
+
+    async function exportInvestigationPackage() {
+      if (!activeInvestigation || !activeInvestigation.id) {
+        throw new Error("Create or load an investigation session first.");
+      }
+      const pkg = await apiFetch(
+        `/api/investigations/${encodeURIComponent(activeInvestigation.id)}/export`,
+        { method: "POST" }
+      );
+      const payload = JSON.stringify(pkg, null, 2);
+      const blob = new Blob([payload], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `nss-quarry-investigation-${activeInvestigation.id}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setMessage("investigation-msg", "Investigation package downloaded.", true);
+    }
+
+    async function syncActiveInvestigationFromSearch(queryReq) {
+      if (!activeInvestigation || !activeInvestigation.id) return;
+      const searchReq = latestSearchRequest || buildSearchRequestFromForm();
+      await patchActiveInvestigation({
+        time_from: searchReq.time_from,
+        time_to: searchReq.time_to,
+        filters: searchReq.filters,
+        columns: Array.isArray(queryReq.columns) ? queryReq.columns : null,
+        limit: searchReq.limit,
+        page: queryReq.page,
+        page_size: queryReq.page_size,
+      });
     }
 
     async function runSearch(options = {}) {
@@ -2810,6 +3352,11 @@
         const renderStartedAt = performance.now();
         renderSearchResult(result, renderToken, { fetchMs }, displayColumns);
         const renderMs = performance.now() - renderStartedAt;
+        try {
+          await syncActiveInvestigationFromSearch(queryReq);
+        } catch (syncErr) {
+          setMessage("investigation-msg", syncErr.message || "Failed to sync investigation session.");
+        }
         setMessageTone(
           "search-msg",
           `Search API ${fetchMs.toFixed(0)} ms | table render ${renderMs.toFixed(0)} ms | background visuals continue asynchronously.`,
@@ -3679,8 +4226,100 @@
       }
     }
 
+    function isPivotableColumn(columnName) {
+      return PIVOTABLE_FIELDS.has(String(columnName || "").toLowerCase());
+    }
+
+    function buildSearchResultsTable(columns, rows) {
+      const table = document.createElement("table");
+      table.classList.add("results-table");
+      const stickyColumns = new Set(["__actions", "time", "action"]);
+      const stickyIndexes = [];
+      const thead = document.createElement("thead");
+      const trh = document.createElement("tr");
+
+      const actionTh = document.createElement("th");
+      actionTh.textContent = "actions";
+      actionTh.classList.add("sticky-col");
+      actionTh.dataset.stickyIndex = "0";
+      stickyIndexes.push(0);
+      trh.appendChild(actionTh);
+
+      for (const [idx, c] of columns.entries()) {
+        const th = document.createElement("th");
+        th.textContent = c;
+        const tableIdx = idx + 1;
+        if (stickyColumns.has(String(c).toLowerCase())) {
+          th.classList.add("sticky-col");
+          th.dataset.stickyIndex = String(tableIdx);
+          stickyIndexes.push(tableIdx);
+        }
+        trh.appendChild(th);
+      }
+      thead.appendChild(trh);
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      rows.forEach((row, rowIndex) => {
+        const tr = document.createElement("tr");
+
+        const actionTd = document.createElement("td");
+        actionTd.className = "row-action-cell sticky-col";
+        actionTd.dataset.stickyIndex = "0";
+        const pinBtn = document.createElement("button");
+        pinBtn.type = "button";
+        pinBtn.className = "row-action-btn";
+        pinBtn.textContent = "Pin";
+        pinBtn.addEventListener("click", async () => {
+          try {
+            await pinEvidenceRow(row);
+          } catch (err) {
+            setMessage("evidence-msg", err.message || "Failed to pin row.");
+          }
+        });
+        actionTd.appendChild(pinBtn);
+        tr.appendChild(actionTd);
+
+        for (const [idx, col] of columns.entries()) {
+          const tableIdx = idx + 1;
+          const td = document.createElement("td");
+          const value = row[col] == null ? "" : String(row[col]);
+          if (stickyColumns.has(String(col).toLowerCase())) {
+            td.classList.add("sticky-col");
+            td.dataset.stickyIndex = String(tableIdx);
+          }
+          if (isPivotableColumn(col) && value.trim().length > 0) {
+            const pivotBtn = document.createElement("button");
+            pivotBtn.type = "button";
+            pivotBtn.className = "pivot-link";
+            pivotBtn.textContent = value;
+            pivotBtn.title = `Add pivot ${col}=${value}`;
+            pivotBtn.addEventListener("click", async () => {
+              try {
+                await addPivot(col, value);
+              } catch (err) {
+                setMessage("investigation-msg", err.message || "Failed to add pivot.");
+              }
+            });
+            td.appendChild(pivotBtn);
+          } else {
+            td.textContent = value;
+            td.title = value;
+          }
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      if (stickyIndexes.length > 0) {
+        applyStickyColumnOffsets(table, stickyIndexes);
+      }
+      return table;
+    }
+
     function renderSearchResult(result, renderToken, metrics = null, displayColumns = null) {
       const rows = result.rows || [];
+      latestSearchRowsData = Array.isArray(rows) ? rows : [];
       searchPage = Number(result.page || searchPage || 1);
       searchPageSize = Number(result.page_size || searchPageSize || 200);
       searchHasMore = Boolean(result.has_more);
@@ -3703,6 +4342,7 @@
         updateSearchPaginationMeta();
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
         renderSearchResultTables([]);
+        renderEvidenceBasket();
         if (renderToken === latestSearchRenderToken) {
           renderSearchInsights([]);
           void renderSearchFlowMap([]);
@@ -3723,12 +4363,9 @@
           columns = [...preferred, ...remaining];
         }
       }
-      const raw = rows.map(r => columns.map(c => r[c] == null ? "" : String(r[c])));
-      host.appendChild(buildTable(columns, raw, {
-        tableClass: "results-table",
-        stickyColumns: ["time", "action"],
-      }));
+      host.appendChild(buildSearchResultsTable(columns, rows));
       renderSearchResultTables(rows);
+      renderEvidenceBasket();
       if (renderToken === latestSearchRenderToken) {
         resetSupportSummary("Search results are ready. Generate a support summary on demand for the current search.");
       }
@@ -4143,6 +4780,9 @@
       populatePolicyReasonOptions();
       resetSupportSummary();
       updateSearchPaginationMeta();
+      renderInvestigationMeta();
+      renderPivotChips();
+      renderEvidenceBasket();
       bindMapControlButtons();
 
       const now = new Date();
@@ -4265,6 +4905,27 @@
       $("search-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         try { await runSearch({ resetPage: true }); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
+      });
+      $("investigation-create").addEventListener("click", async () => {
+        try {
+          await createInvestigationSession();
+        } catch (err) {
+          setMessage("investigation-msg", err.message || "Failed to create investigation session.");
+        }
+      });
+      $("investigation-load").addEventListener("click", async () => {
+        try {
+          await loadInvestigationSession();
+        } catch (err) {
+          setMessage("investigation-msg", err.message || "Failed to load investigation session.");
+        }
+      });
+      $("investigation-export").addEventListener("click", async () => {
+        try {
+          await exportInvestigationPackage();
+        } catch (err) {
+          setMessage("investigation-msg", err.message || "Failed to export investigation package.");
+        }
       });
       $("search-prev").addEventListener("click", async () => {
         if (searchPage <= 1) return;

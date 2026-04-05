@@ -1,6 +1,7 @@
 mod audit;
 mod auth;
 mod config;
+mod investigation;
 mod models;
 mod pcap;
 mod pdf;
@@ -33,12 +34,15 @@ use tracing::{error, info};
 use crate::audit::AuditLogger;
 use crate::auth::{ApiTokenAuthError, AuthManager, has_min_role};
 use crate::config::{ApiTokenConfig, AppConfig, AuthMode, RoleName};
+use crate::investigation::InvestigationService;
 use crate::models::{
     ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenInfo, ApiTokenListResponse,
     ApiTokenUpdateRequest, AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
-    IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
-    PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
-    SupportSummaryRequest, SupportSummaryResponse,
+    IngestorForceFinalizeOpenFilesResponse, InvestigationCreateRequest,
+    InvestigationExportResponse, InvestigationPinRequest, InvestigationSession,
+    InvestigationUpdateRequest, LocalLoginRequest, ParquetColumnInfo, PcapAnalyzeResponse,
+    ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest, SupportSummaryRequest,
+    SupportSummaryResponse,
 };
 use crate::pcap::analyze_pcap_file;
 use crate::query::{DashboardRefreshMode, QueryService, VisibilityFilters};
@@ -82,6 +86,7 @@ struct AppState {
     auth: AuthManager,
     audit: AuditLogger,
     query: QueryService,
+    investigations: InvestigationService,
     ingestor_client: reqwest::Client,
     api_tokens_path: PathBuf,
     visibility_filters_path: PathBuf,
@@ -165,6 +170,13 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let cfg = Arc::new(AppConfig::load(&config_path)?);
     let auth = AuthManager::new(&cfg.auth).await?;
     let query = QueryService::new(&cfg)?;
+    let investigations_path = investigations_path_for_config(&cfg);
+    let investigations = InvestigationService::new(
+        investigations_path.clone(),
+        24,
+        &cfg.security.input_value_regex,
+    )
+    .await?;
     let visibility_filters_path = visibility_filters_path_for_config(&cfg);
     let visibility_filters = load_visibility_filters(&visibility_filters_path).await?;
     query.set_visibility_filters(visibility_filters.clone())?;
@@ -181,6 +193,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         auth,
         audit,
         query,
+        investigations,
         ingestor_client,
         api_tokens_path,
         visibility_filters_path,
@@ -190,8 +203,13 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         rules_blocked_ips = visibility_filters.blocked_ips.len(),
         "loaded visibility filters"
     );
+    info!(
+        investigations_path = %investigations_path.display(),
+        "loaded investigation session store"
+    );
     info!(api_tokens = api_tokens.len(), "loaded api tokens");
     state.query.start_dashboard_maintenance();
+    state.investigations.start_maintenance();
 
     let app = build_router(state);
 
@@ -224,6 +242,20 @@ fn build_router(state: AppState) -> Router {
             post(api_admin_ingestor_force_finalize_open_files),
         )
         .route("/api/search", post(api_search))
+        .route("/api/investigations", post(api_investigations_create))
+        .route(
+            "/api/investigations/{id}",
+            get(api_investigations_get).patch(api_investigations_patch),
+        )
+        .route("/api/investigations/{id}/pin", post(api_investigations_pin))
+        .route(
+            "/api/investigations/{id}/pin/{item_id}",
+            axum::routing::delete(api_investigations_pin_delete),
+        )
+        .route(
+            "/api/investigations/{id}/export",
+            post(api_investigations_export),
+        )
         .route("/api/summary/support", post(api_support_summary))
         .route("/api/export/csv", post(api_export_csv))
         .route("/api/export/pdf-summary", post(api_export_pdf_summary))
@@ -574,6 +606,288 @@ async fn api_search(
         })
         .await;
     Ok(Json(result))
+}
+
+async fn api_investigations_create(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<InvestigationCreateRequest>,
+) -> Result<Json<InvestigationSession>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let session = state
+        .investigations
+        .create(&user.username, req.search.clone())
+        .await
+        .map_err(AppError::bad_request)?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "investigation.session.create".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "session_id": session.id,
+                "owner": session.owner,
+                "query": req.search,
+            }),
+        })
+        .await;
+    Ok(Json(session))
+}
+
+async fn api_investigations_get(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+) -> Result<Json<InvestigationSession>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let session = load_authorized_investigation(&state, &id, &user).await?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "investigation.session.load".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "session_id": session.id,
+                "owner": session.owner,
+                "pivots": session.pivots.len(),
+                "pinned_items": session.pinned_items.len(),
+            }),
+        })
+        .await;
+    Ok(Json(session))
+}
+
+async fn api_investigations_patch(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    Json(req): Json<InvestigationUpdateRequest>,
+) -> Result<Json<InvestigationSession>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let existing = load_authorized_investigation(&state, &id, &user).await?;
+    let session = state
+        .investigations
+        .apply_update(&existing.id, req.clone())
+        .await
+        .map_err(AppError::bad_request)?
+        .ok_or_else(|| AppError::not_found("investigation session not found"))?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "investigation.session.update".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "session_id": session.id,
+                "owner": session.owner,
+                "update": req,
+                "pivots": session.pivots.len(),
+                "pinned_items": session.pinned_items.len(),
+            }),
+        })
+        .await;
+    Ok(Json(session))
+}
+
+async fn api_investigations_pin(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    Json(req): Json<InvestigationPinRequest>,
+) -> Result<Json<InvestigationSession>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let existing = load_authorized_investigation(&state, &id, &user).await?;
+    let session = state
+        .investigations
+        .add_pin(&existing.id, req.row.clone(), req.note.clone())
+        .await
+        .map_err(AppError::bad_request)?
+        .ok_or_else(|| AppError::not_found("investigation session not found"))?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "investigation.pin.add".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "session_id": session.id,
+                "owner": session.owner,
+                "pinned_items": session.pinned_items.len(),
+            }),
+        })
+        .await;
+    Ok(Json(session))
+}
+
+async fn api_investigations_pin_delete(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path((id, item_id)): Path<(String, String)>,
+) -> Result<Json<InvestigationSession>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let existing = load_authorized_investigation(&state, &id, &user).await?;
+    let session = state
+        .investigations
+        .remove_pin(&existing.id, &item_id)
+        .await
+        .map_err(AppError::bad_request)?
+        .ok_or_else(|| AppError::not_found("investigation session not found"))?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "investigation.pin.remove".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "session_id": session.id,
+                "owner": session.owner,
+                "pin_id": item_id,
+                "pinned_items": session.pinned_items.len(),
+            }),
+        })
+        .await;
+    Ok(Json(session))
+}
+
+async fn api_investigations_export(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+) -> Result<Json<InvestigationExportResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let session = load_authorized_investigation(&state, &id, &user).await?;
+    let mut summary_search = build_support_summary_search_request(&state, &session.search).await?;
+    summary_search.limit = Some(state.cfg.query.max_rows);
+    let search_result = state
+        .query
+        .search(summary_search.clone(), user.role)
+        .await
+        .map_err(AppError::bad_request)?;
+    let summary = build_support_summary(
+        &session.search,
+        &search_result,
+        None,
+        &state.cfg.data.fields,
+    );
+    let csv = state
+        .query
+        .export_csv(session.search.clone(), user.role)
+        .await
+        .map_err(AppError::bad_request)?;
+    let response = InvestigationExportResponse {
+        investigation_id: session.id.clone(),
+        exported_at: Utc::now(),
+        owner: session.owner.clone(),
+        query: session.search.clone(),
+        pivots: session.pivots.clone(),
+        pinned_items: session.pinned_items.clone(),
+        summary,
+        csv,
+        csv_filename: format!("nss-quarry-investigation-{}.csv", session.id),
+    };
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "investigation.export".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "session_id": response.investigation_id,
+                "owner": response.owner,
+                "summary_rows": response.summary.row_count,
+                "summary_truncated": response.summary.truncated,
+                "pinned_items": response.pinned_items.len(),
+                "csv_bytes": response.csv.len(),
+            }),
+        })
+        .await;
+    Ok(Json(response))
 }
 
 async fn api_support_summary(
@@ -981,6 +1295,23 @@ fn audit_pcap_context(
         "unique_source_ip_count": context.unique_source_ip_count,
         "unique_destination_ip_count": context.unique_destination_ip_count,
     })
+}
+
+async fn load_authorized_investigation(
+    state: &AppState,
+    id: &str,
+    user: &crate::models::AuthUser,
+) -> Result<InvestigationSession, AppError> {
+    let session = state
+        .investigations
+        .get(id)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::not_found("investigation session not found"))?;
+    if session.owner != user.username && user.role != RoleName::Admin {
+        return Err(AppError::forbidden("investigation session access denied"));
+    }
+    Ok(session)
 }
 
 async fn api_dashboard(
@@ -1401,6 +1732,14 @@ fn visibility_filters_path_for_config(cfg: &AppConfig) -> PathBuf {
         .parent()
         .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"))
         .join("visibility_filters.json")
+}
+
+fn investigations_path_for_config(cfg: &AppConfig) -> PathBuf {
+    cfg.audit
+        .path
+        .parent()
+        .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"))
+        .join("investigations.json")
 }
 
 fn api_tokens_path_for_config(cfg: &AppConfig) -> PathBuf {
@@ -2162,6 +2501,13 @@ impl AppError {
         }
     }
 
+    fn not_found(msg: &str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: msg.to_string(),
+        }
+    }
+
     fn internal(err: impl std::fmt::Display) -> Self {
         error!(error = %err, "internal error");
         Self {
@@ -2282,6 +2628,13 @@ mod security_tests {
         let cfg = test_config();
         let auth = AuthManager::new(&cfg.auth).await.expect("auth manager");
         let query = QueryService::new(&cfg).expect("query service");
+        let investigations = InvestigationService::new(
+            investigations_path_for_config(&cfg),
+            24,
+            &cfg.security.input_value_regex,
+        )
+        .await
+        .expect("investigation service");
         let visibility_filters_path = visibility_filters_path_for_config(&cfg);
         query
             .set_visibility_filters(VisibilityFilters::default())
@@ -2296,6 +2649,7 @@ mod security_tests {
             auth,
             audit,
             query,
+            investigations,
             ingestor_client,
             api_tokens_path: std::env::temp_dir()
                 .join(format!("nss-quarry-api-tokens-{}.json", Uuid::new_v4())),

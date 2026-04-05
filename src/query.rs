@@ -1384,6 +1384,20 @@ fn build_search_sql(
         &fields.server_ip_field,
         req.filters.server_ip.as_deref(),
     );
+    if let Some(source_country_col) = fields.source_country_field.as_deref() {
+        apply_contains_or_multi_exact_filter(
+            &mut where_clauses,
+            source_country_col,
+            req.filters.source_country.as_deref(),
+        );
+    }
+    if let Some(destination_country_col) = fields.destination_country_field.as_deref() {
+        apply_contains_or_multi_exact_filter(
+            &mut where_clauses,
+            destination_country_col,
+            req.filters.destination_country.as_deref(),
+        );
+    }
     apply_filter(
         &mut where_clauses,
         &fields.device_field,
@@ -1671,6 +1685,8 @@ fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
     validate_filter_value(filters.category.as_deref(), re, false)?;
     validate_filter_value(filters.source_ip.as_deref(), re, true)?;
     validate_filter_value(filters.server_ip.as_deref(), re, true)?;
+    validate_filter_value(filters.source_country.as_deref(), re, true)?;
+    validate_filter_value(filters.destination_country.as_deref(), re, true)?;
     validate_filter_value(filters.device.as_deref(), re, false)?;
     validate_filter_value(filters.department.as_deref(), re, false)?;
     Ok(())
