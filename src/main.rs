@@ -1873,8 +1873,18 @@ fn audit_rows_to_csv(rows: &[AuditEvent]) -> String {
 }
 
 fn csv_escape_audit(value: &str) -> String {
+    let value = neutralize_csv_formula(value);
     if value.contains(',') || value.contains('"') || value.contains('\n') {
         format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
+    }
+}
+
+fn neutralize_csv_formula(value: &str) -> String {
+    let first_non_ws = value.chars().find(|c| !matches!(c, ' ' | '\t'));
+    if matches!(first_non_ws, Some('=' | '+' | '-' | '@')) {
+        format!("'{}", value)
     } else {
         value.to_string()
     }
@@ -2591,5 +2601,12 @@ mod security_tests {
         let peer = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
         let source = extract_source_ip(&headers, Some(peer));
         assert_eq!(source.as_deref(), Some("203.0.113.9"));
+    }
+
+    #[test]
+    fn audit_csv_escape_neutralizes_formula_payloads() {
+        assert_eq!(csv_escape_audit("=NOW()"), "'=NOW()");
+        assert_eq!(csv_escape_audit("\t-1+2"), "'\t-1+2");
+        assert_eq!(csv_escape_audit("normal"), "normal");
     }
 }

@@ -1476,8 +1476,18 @@ fn rows_to_csv(rows: &[serde_json::Map<String, serde_json::Value>]) -> String {
 }
 
 fn csv_escape(value: &str) -> String {
+    let value = neutralize_csv_formula(value);
     if value.contains(',') || value.contains('"') || value.contains('\n') {
         format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value
+    }
+}
+
+fn neutralize_csv_formula(value: &str) -> String {
+    let first_non_ws = value.chars().find(|c| !matches!(c, ' ' | '\t'));
+    if matches!(first_non_ws, Some('=' | '+' | '-' | '@')) {
+        format!("'{}", value)
     } else {
         value.to_string()
     }
@@ -2140,5 +2150,13 @@ mod tests {
         let trimmed = trim_dashboard_error_message(&msg);
         assert!(trimmed.len() <= 243);
         assert!(trimmed.ends_with("..."));
+    }
+
+    #[test]
+    fn csv_escape_neutralizes_formula_injection_payloads() {
+        assert_eq!(csv_escape("=2+2"), "'=2+2");
+        assert_eq!(csv_escape(" \t+SUM(A1:A2)"), "' \t+SUM(A1:A2)");
+        assert_eq!(csv_escape("@malicious"), "'@malicious");
+        assert_eq!(csv_escape("normal-value"), "normal-value");
     }
 }
