@@ -2648,8 +2648,17 @@
         return;
       }
       const renderToken = ++latestSearchRenderToken;
+      const startedAt = performance.now();
       const result = await apiFetch("/api/search", { method: "POST", body: req });
-      renderSearchResult(result, renderToken);
+      const fetchMs = performance.now() - startedAt;
+      const renderStartedAt = performance.now();
+      renderSearchResult(result, renderToken, { fetchMs });
+      const renderMs = performance.now() - renderStartedAt;
+      setMessageTone(
+        "search-msg",
+        `Search API ${fetchMs.toFixed(0)} ms | table render ${renderMs.toFixed(0)} ms | background visuals continue asynchronously.`,
+        "info"
+      );
       void refreshSearchEnhancements(req, result, renderToken);
     }
 
@@ -3337,9 +3346,16 @@
       }
     }
 
-    function renderSearchResult(result, renderToken) {
+    function renderSearchResult(result, renderToken, metrics = null) {
       const rows = result.rows || [];
-      $("result-meta").textContent = `Rows: ${result.row_count} | Truncated: ${result.truncated ? "yes" : "no"}`;
+      const parts = [
+        `Rows: ${result.row_count}`,
+        `Truncated: ${result.truncated ? "yes" : "no"}`,
+      ];
+      if (metrics && Number.isFinite(metrics.fetchMs)) {
+        parts.push(`Search API: ${metrics.fetchMs.toFixed(0)} ms`);
+      }
+      $("result-meta").textContent = parts.join(" | ");
       const host = $("results");
       host.innerHTML = "";
       if (rows.length === 0) {
