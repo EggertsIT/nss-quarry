@@ -161,7 +161,7 @@ Typical error status codes:
 | `POST` | `/api/search` | `helpdesk+` | search logs |
 | `POST` | `/api/summary/support` | `helpdesk+` | generate a structured support summary from a bounded search |
 | `POST` | `/api/export/csv` | `helpdesk+` | export search results as CSV |
-| `POST` | `/api/export/pdf-summary` | `helpdesk+` | export a support-summary PDF for the current search window |
+| `POST` | `/api/export/pdf-summary` | `helpdesk+` | export a deep-dive incident report PDF for the current search window |
 | `GET` | `/api/analytics/summary` | `helpdesk+` | return bounded aggregate totals and top values from persisted hourly snapshots |
 | `GET` | `/api/analytics/timeseries` | `helpdesk+` | return hourly aggregate series from persisted hourly snapshots |
 | `GET` | `/api/analytics/top` | `helpdesk+` | return top values for one aggregate dimension over a bounded window |
@@ -546,7 +546,14 @@ Response headers:
 
 ### `POST /api/export/pdf-summary`
 
-Builds a support-summary PDF from the same bounded search window and optional PCAP context used by `POST /api/summary/support`.
+Builds a deep-dive incident report PDF from the current search window and optional PCAP context used by `POST /api/summary/support`.
+
+The export:
+
+- expands the search up to the configured server-side `max_rows` limit
+- preserves the support summary and findings sections
+- appends every returned transaction whose policy reason is not `Allowed`, `None`, `N/A`, or empty
+- marks the report as truncated when the bounded search result was truncated
 
 Request body:
 
