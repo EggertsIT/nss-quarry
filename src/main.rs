@@ -36,7 +36,6 @@ use crate::auth::{ApiTokenAuthError, AuthManager, has_min_role};
 use crate::config::{ApiTokenConfig, AppConfig, AuthMode, RoleName};
 use crate::integration::{ServiceNowIntegrationService, ServiceNowJobInput};
 use crate::models::{
-    AnalyticsSummaryResponse, AnalyticsTimeseriesResponse, AnalyticsTopResponse,
     ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenInfo, ApiTokenListResponse,
     ApiTokenUpdateRequest, AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
     IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
@@ -107,30 +106,6 @@ struct DashboardQueryParams {
 #[derive(Debug, Default, serde::Deserialize)]
 struct CsvExportQuery {
     token: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct AnalyticsWindowQuery {
-    from: chrono::DateTime<Utc>,
-    to: chrono::DateTime<Utc>,
-    refresh: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct AnalyticsTimeseriesQuery {
-    from: chrono::DateTime<Utc>,
-    to: chrono::DateTime<Utc>,
-    series: String,
-    refresh: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct AnalyticsTopQuery {
-    from: chrono::DateTime<Utc>,
-    to: chrono::DateTime<Utc>,
-    dimension: String,
-    limit: Option<usize>,
-    refresh: Option<String>,
 }
 
 #[tokio::main]
@@ -270,9 +245,6 @@ fn build_router(state: AppState) -> Router {
         .route("/api/summary/support", post(api_support_summary))
         .route("/api/export/csv", post(api_export_csv))
         .route("/api/export/pdf-summary", post(api_export_pdf_summary))
-        .route("/api/analytics/summary", get(api_analytics_summary))
-        .route("/api/analytics/timeseries", get(api_analytics_timeseries))
-        .route("/api/analytics/top", get(api_analytics_top))
         .route(
             "/api/integrations/servicenow/investigations",
             post(api_servicenow_submit),
@@ -1419,20 +1391,6 @@ fn audit_pcap_context(
     })
 }
 
-fn refresh_mode_from_param(value: Option<&str>) -> DashboardRefreshMode {
-    match value {
-        Some("delta") => DashboardRefreshMode::Delta,
-        _ => DashboardRefreshMode::Normal,
-    }
-}
-
-fn refresh_mode_label(mode: DashboardRefreshMode) -> &'static str {
-    match mode {
-        DashboardRefreshMode::Normal => "normal",
-        DashboardRefreshMode::Delta => "delta",
-    }
-}
-
 async fn api_dashboard(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -1450,7 +1408,10 @@ async fn api_dashboard(
         RoleName::Helpdesk,
     )
     .await?;
-    let refresh_mode = refresh_mode_from_param(params.refresh.as_deref());
+    let refresh_mode = match params.refresh.as_deref() {
+        Some("delta") => DashboardRefreshMode::Delta,
+        _ => DashboardRefreshMode::Normal,
+    };
     let data = state
         .query
         .dashboard(&name, user.role, refresh_mode)
@@ -1468,162 +1429,15 @@ async fn api_dashboard(
                 "auth_mode": user.auth_mode,
                 "source_ip": source_ip,
                 "name": name,
-                "refresh_mode": refresh_mode_label(refresh_mode),
+                "refresh_mode": match refresh_mode {
+                    DashboardRefreshMode::Normal => "normal",
+                    DashboardRefreshMode::Delta => "delta",
+                },
                 "dashboard_source": data.source,
                 "dashboard_status": data.status,
                 "snapshot_generated_at": data.snapshot_generated_at,
                 "data_window_to": data.data_window_to,
                 "snapshot_age_seconds": data.snapshot_age_seconds
-            }),
-        })
-        .await;
-    Ok(Json(data))
-}
-
-async fn api_analytics_summary(
-    State(state): State<AppState>,
-    jar: CookieJar,
-    headers: HeaderMap,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    Query(params): Query<AnalyticsWindowQuery>,
-) -> Result<Json<AnalyticsSummaryResponse>, AppError> {
-    let source_ip = extract_source_ip(&headers, Some(peer));
-    let user = require_user(
-        &state,
-        &jar,
-        &headers,
-        source_ip.as_deref(),
-        RoleName::Helpdesk,
-    )
-    .await?;
-    let refresh_mode = refresh_mode_from_param(params.refresh.as_deref());
-    let data = state
-        .query
-        .analytics_summary(user.role, params.from, params.to, refresh_mode)
-        .await
-        .map_err(AppError::bad_request)?;
-    state
-        .audit
-        .log(AuditEvent {
-            at: Utc::now(),
-            actor: Some(user.username),
-            role: Some(user.role),
-            action: "query.analytics_summary".to_string(),
-            outcome: "success".to_string(),
-            metadata: serde_json::json!({
-                "auth_mode": user.auth_mode,
-                "source_ip": source_ip,
-                "from": params.from,
-                "to": params.to,
-                "refresh_mode": refresh_mode_label(refresh_mode),
-                "analytics_source": data.meta.source,
-                "analytics_status": data.meta.status,
-            }),
-        })
-        .await;
-    Ok(Json(data))
-}
-
-async fn api_analytics_timeseries(
-    State(state): State<AppState>,
-    jar: CookieJar,
-    headers: HeaderMap,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    Query(params): Query<AnalyticsTimeseriesQuery>,
-) -> Result<Json<AnalyticsTimeseriesResponse>, AppError> {
-    let source_ip = extract_source_ip(&headers, Some(peer));
-    let user = require_user(
-        &state,
-        &jar,
-        &headers,
-        source_ip.as_deref(),
-        RoleName::Helpdesk,
-    )
-    .await?;
-    let refresh_mode = refresh_mode_from_param(params.refresh.as_deref());
-    let series = params
-        .series
-        .split(',')
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToString::to_string)
-        .collect::<Vec<_>>();
-    let data = state
-        .query
-        .analytics_timeseries(user.role, params.from, params.to, &series, refresh_mode)
-        .await
-        .map_err(AppError::bad_request)?;
-    state
-        .audit
-        .log(AuditEvent {
-            at: Utc::now(),
-            actor: Some(user.username),
-            role: Some(user.role),
-            action: "query.analytics_timeseries".to_string(),
-            outcome: "success".to_string(),
-            metadata: serde_json::json!({
-                "auth_mode": user.auth_mode,
-                "source_ip": source_ip,
-                "from": params.from,
-                "to": params.to,
-                "series": series,
-                "refresh_mode": refresh_mode_label(refresh_mode),
-                "analytics_source": data.meta.source,
-                "analytics_status": data.meta.status,
-            }),
-        })
-        .await;
-    Ok(Json(data))
-}
-
-async fn api_analytics_top(
-    State(state): State<AppState>,
-    jar: CookieJar,
-    headers: HeaderMap,
-    ConnectInfo(peer): ConnectInfo<SocketAddr>,
-    Query(params): Query<AnalyticsTopQuery>,
-) -> Result<Json<AnalyticsTopResponse>, AppError> {
-    let source_ip = extract_source_ip(&headers, Some(peer));
-    let user = require_user(
-        &state,
-        &jar,
-        &headers,
-        source_ip.as_deref(),
-        RoleName::Helpdesk,
-    )
-    .await?;
-    let refresh_mode = refresh_mode_from_param(params.refresh.as_deref());
-    let limit = params.limit.unwrap_or(10);
-    let data = state
-        .query
-        .analytics_top(
-            user.role,
-            params.from,
-            params.to,
-            &params.dimension,
-            limit,
-            refresh_mode,
-        )
-        .await
-        .map_err(AppError::bad_request)?;
-    state
-        .audit
-        .log(AuditEvent {
-            at: Utc::now(),
-            actor: Some(user.username),
-            role: Some(user.role),
-            action: "query.analytics_top".to_string(),
-            outcome: "success".to_string(),
-            metadata: serde_json::json!({
-                "auth_mode": user.auth_mode,
-                "source_ip": source_ip,
-                "from": params.from,
-                "to": params.to,
-                "dimension": params.dimension,
-                "limit": limit,
-                "refresh_mode": refresh_mode_label(refresh_mode),
-                "analytics_source": data.meta.source,
-                "analytics_status": data.meta.status,
             }),
         })
         .await;
@@ -3003,17 +2817,6 @@ mod security_tests {
             .await
             .expect("response");
         assert_eq!(res_visibility.status(), StatusCode::UNAUTHORIZED);
-
-        let req_analytics = Request::builder()
-            .uri("/api/analytics/summary?from=2026-04-05T10:00:00Z&to=2026-04-05T11:00:00Z")
-            .body(Body::empty())
-            .expect("request");
-        let res_analytics = app
-            .clone()
-            .oneshot(with_local_peer(req_analytics))
-            .await
-            .expect("response");
-        assert_eq!(res_analytics.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -3097,24 +2900,6 @@ mod security_tests {
             .await
             .expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn helpdesk_can_access_analytics_summary() {
-        let app = test_app().await;
-        let cookie = login_cookie(&app, "helpdesk", "helpdesk").await;
-
-        let req = Request::builder()
-            .uri("/api/analytics/summary?from=2026-04-05T10:00:00Z&to=2026-04-05T11:00:00Z")
-            .header(header::COOKIE, cookie)
-            .body(Body::empty())
-            .expect("request");
-        let res = app
-            .clone()
-            .oneshot(with_local_peer(req))
-            .await
-            .expect("response");
-        assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]

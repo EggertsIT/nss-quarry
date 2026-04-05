@@ -13,9 +13,8 @@ use tracing::{error, warn};
 
 use crate::config::{AppConfig, FieldMap, RoleName};
 use crate::models::{
-    AnalyticsCountRow, AnalyticsMeta, AnalyticsSeries, AnalyticsSummaryResponse,
-    AnalyticsTimeseriesPoint, AnalyticsTimeseriesResponse, AnalyticsTopResponse, DashboardResponse,
-    DashboardStatus, MetricCard, SearchFilters, SearchRequest, SearchResponse, TableBlock,
+    DashboardResponse, DashboardStatus, MetricCard, SearchFilters, SearchRequest, SearchResponse,
+    TableBlock,
 };
 
 const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
@@ -60,8 +59,6 @@ struct DashboardSnapshot {
     data_window_from: DateTime<Utc>,
     data_window_to: DateTime<Utc>,
     aggregate: DashboardAggregate,
-    #[serde(default)]
-    hourly_buckets: Vec<AnalyticsBucket>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -75,18 +72,10 @@ struct DashboardAggregate {
     top_source_ips: BTreeMap<String, i64>,
     top_departments: BTreeMap<String, i64>,
     #[serde(default)]
-    top_destination_ips: BTreeMap<String, i64>,
-    #[serde(default)]
     top_response_codes: BTreeMap<String, i64>,
     #[serde(default)]
     top_policy_reasons: BTreeMap<String, i64>,
     country_flows: BTreeMap<String, i64>,
-}
-
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-struct AnalyticsBucket {
-    hour: DateTime<Utc>,
-    aggregate: DashboardAggregate,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -103,11 +92,9 @@ struct QueryInner {
     default_columns: Vec<String>,
     helpdesk_mask_fields: Vec<String>,
     visibility_filters: RwLock<CompiledVisibilityFilters>,
-    analytics_snapshot_dir: PathBuf,
+    dashboard_snapshot_dir: PathBuf,
     dashboard_snapshot_cache: RwLock<HashMap<String, DashboardSnapshot>>,
     dashboard_snapshot_refresh_secs: u64,
-    analytics_retention_days: i64,
-    analytics_top_n: usize,
     dashboard_refresh_in_progress: AtomicBool,
     dashboard_refresh_state: RwLock<DashboardRefreshState>,
     input_value_re: Regex,
@@ -128,11 +115,9 @@ impl QueryService {
                 default_columns: cfg.query.default_columns.clone(),
                 helpdesk_mask_fields: cfg.security.helpdesk_mask_fields.clone(),
                 visibility_filters: RwLock::new(CompiledVisibilityFilters::default()),
-                analytics_snapshot_dir: cfg.query.analytics_cache_dir.clone(),
+                dashboard_snapshot_dir: dashboard_snapshot_dir(cfg),
                 dashboard_snapshot_cache: RwLock::new(HashMap::new()),
                 dashboard_snapshot_refresh_secs: cfg.query.dashboard_snapshot_refresh_secs,
-                analytics_retention_days: cfg.query.analytics_retention_days,
-                analytics_top_n: cfg.query.analytics_top_n,
                 dashboard_refresh_in_progress: AtomicBool::new(false),
                 dashboard_refresh_state: RwLock::new(DashboardRefreshState::default()),
                 input_value_re,
@@ -300,147 +285,6 @@ impl QueryService {
         }
     }
 
-    pub async fn analytics_summary(
-        &self,
-        role: RoleName,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-        refresh_mode: DashboardRefreshMode,
-    ) -> Result<AnalyticsSummaryResponse> {
-        validate_time_window(from, to, self.inner.analytics_retention_days)?;
-        let (snapshot, meta) = self
-            .analytics_snapshot_with_meta("overview", refresh_mode)
-            .await?;
-        let aggregate = aggregate_for_recent_hours(&snapshot.hourly_buckets, from, to);
-        Ok(AnalyticsSummaryResponse {
-            meta,
-            time_from: from,
-            time_to: to,
-            events: aggregate.events,
-            blocked: aggregate.blocked,
-            threats: aggregate.threats,
-            top_response_codes: analytics_count_rows(
-                &aggregate.top_response_codes,
-                self.inner.analytics_top_n,
-                role,
-                false,
-            ),
-            top_policy_reasons: analytics_count_rows(
-                &aggregate.top_policy_reasons,
-                self.inner.analytics_top_n,
-                role,
-                false,
-            ),
-            top_categories: analytics_count_rows(
-                &aggregate.top_categories,
-                self.inner.analytics_top_n,
-                role,
-                false,
-            ),
-            top_users: analytics_count_rows(
-                &aggregate.top_users,
-                self.inner.analytics_top_n,
-                role,
-                true,
-            ),
-            top_devices: analytics_count_rows(
-                &aggregate.top_devices,
-                self.inner.analytics_top_n,
-                role,
-                true,
-            ),
-            top_destination_ips: analytics_count_rows(
-                &aggregate.top_destination_ips,
-                self.inner.analytics_top_n,
-                role,
-                false,
-            ),
-        })
-    }
-
-    pub async fn analytics_timeseries(
-        &self,
-        role: RoleName,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-        series: &[String],
-        refresh_mode: DashboardRefreshMode,
-    ) -> Result<AnalyticsTimeseriesResponse> {
-        validate_time_window(from, to, self.inner.analytics_retention_days)?;
-        let requested = analytics_series_list(series)?;
-        let (snapshot, meta) = self
-            .analytics_snapshot_with_meta("overview", refresh_mode)
-            .await?;
-        let buckets = snapshot
-            .hourly_buckets
-            .iter()
-            .filter(|bucket| bucket.hour >= floor_to_hour(from) && bucket.hour < to)
-            .collect::<Vec<_>>();
-
-        let mut out = Vec::new();
-        for item in requested {
-            let mut points = Vec::new();
-            for bucket in &buckets {
-                let value = analytics_series_value(&bucket.aggregate, &item);
-                points.push(AnalyticsTimeseriesPoint {
-                    at: bucket.hour,
-                    value,
-                });
-            }
-            out.push(AnalyticsSeries {
-                series: item.raw.clone(),
-                label: item.label.clone(),
-                points,
-            });
-        }
-
-        if role == RoleName::Helpdesk {
-            for series in &mut out {
-                if series.series.starts_with("user:") || series.series.starts_with("device:") {
-                    series.label = "[REDACTED]".to_string();
-                }
-            }
-        }
-
-        Ok(AnalyticsTimeseriesResponse {
-            meta,
-            time_from: from,
-            time_to: to,
-            series: out,
-        })
-    }
-
-    pub async fn analytics_top(
-        &self,
-        role: RoleName,
-        from: DateTime<Utc>,
-        to: DateTime<Utc>,
-        dimension: &str,
-        limit: usize,
-        refresh_mode: DashboardRefreshMode,
-    ) -> Result<AnalyticsTopResponse> {
-        validate_time_window(from, to, self.inner.analytics_retention_days)?;
-        let dimension = AnalyticsDimension::parse(dimension)?;
-        let effective_limit = limit.clamp(1, self.inner.analytics_top_n);
-        let (snapshot, meta) = self
-            .analytics_snapshot_with_meta("overview", refresh_mode)
-            .await?;
-        let aggregate = aggregate_for_recent_hours(&snapshot.hourly_buckets, from, to);
-        let counts = analytics_dimension_counts(&aggregate, dimension);
-        Ok(AnalyticsTopResponse {
-            meta,
-            time_from: from,
-            time_to: to,
-            dimension: dimension.as_str().to_string(),
-            rows: analytics_count_rows(
-                counts,
-                effective_limit,
-                role,
-                dimension.is_sensitive_for_helpdesk(),
-            ),
-        })
-    }
-
     pub async fn refresh_dashboard_snapshot(&self, name: &str) -> Result<()> {
         if self
             .inner
@@ -468,153 +312,6 @@ impl QueryService {
             .dashboard_refresh_in_progress
             .store(false, Ordering::SeqCst);
         result
-    }
-
-    async fn analytics_snapshot_with_meta(
-        &self,
-        name: &str,
-        refresh_mode: DashboardRefreshMode,
-    ) -> Result<(DashboardSnapshot, AnalyticsMeta)> {
-        let now = Utc::now();
-        let Some(snapshot) = self.dashboard_snapshot_get(name)? else {
-            self.spawn_dashboard_snapshot_refresh(name.to_string());
-            let refresh_state = self.dashboard_refresh_state_value();
-            let status = if refresh_state.last_error.is_some() {
-                DashboardStatus::Degraded
-            } else {
-                DashboardStatus::Warming
-            };
-            let notes = if status == DashboardStatus::Warming {
-                vec![
-                    "Analytics snapshot is building. Retry shortly for populated results."
-                        .to_string(),
-                ]
-            } else {
-                vec![
-                    "Analytics snapshot is currently unavailable. A background rebuild has been scheduled."
-                        .to_string(),
-                ]
-            };
-            let empty_snapshot =
-                empty_analytics_snapshot(name, now, self.inner.analytics_retention_days);
-            return Ok((
-                empty_snapshot,
-                AnalyticsMeta {
-                    generated_at: now,
-                    status,
-                    source: "warming".to_string(),
-                    snapshot_generated_at: None,
-                    snapshot_age_seconds: None,
-                    data_window_from: None,
-                    data_window_to: None,
-                    refresh_in_progress: self
-                        .inner
-                        .dashboard_refresh_in_progress
-                        .load(Ordering::Relaxed),
-                    last_refresh_attempt_at: refresh_state.last_attempt_at,
-                    last_refresh_success_at: refresh_state.last_success_at,
-                    last_refresh_error: refresh_state.last_error,
-                    notes,
-                },
-            ));
-        };
-
-        if snapshot_needs_refresh(&snapshot, now, self.inner.dashboard_snapshot_refresh_secs) {
-            self.spawn_dashboard_snapshot_refresh(name.to_string());
-        }
-
-        let (active_snapshot, source, notes, transient_error) = match refresh_mode {
-            DashboardRefreshMode::Normal => (
-                snapshot.clone(),
-                "hourly_snapshot".to_string(),
-                analytics_default_notes(&snapshot, now, self.inner.dashboard_snapshot_refresh_secs),
-                None,
-            ),
-            DashboardRefreshMode::Delta => {
-                if snapshot_needs_full_rebuild_before_delta(
-                    &snapshot,
-                    now,
-                    self.inner.dashboard_snapshot_refresh_secs,
-                ) {
-                    self.spawn_dashboard_snapshot_refresh(name.to_string());
-                    (
-                        snapshot.clone(),
-                        "hourly_snapshot".to_string(),
-                        vec![
-                            "Current aggregate snapshot is too old for a safe delta refresh. A background hourly rebuild was started."
-                                .to_string(),
-                        ],
-                        None,
-                    )
-                } else {
-                    match self.refresh_dashboard_delta(name, &snapshot).await {
-                        Ok(Some(delta_snapshot)) => (
-                            delta_snapshot,
-                            "hourly_snapshot_plus_delta".to_string(),
-                            vec![
-                                "Manual refresh merged newer finalized parquet data on top of the hourly aggregate snapshot."
-                                    .to_string(),
-                            ],
-                            None,
-                        ),
-                        Ok(None) => (
-                            snapshot.clone(),
-                            "hourly_snapshot".to_string(),
-                            vec![
-                                "No newer finalized parquet data was available for delta refresh."
-                                    .to_string(),
-                            ],
-                            None,
-                        ),
-                        Err(err) => (
-                            snapshot.clone(),
-                            "hourly_snapshot".to_string(),
-                            vec![
-                                "Delta refresh failed. Showing the latest hourly aggregate snapshot."
-                                    .to_string(),
-                            ],
-                            Some(trim_dashboard_error_message(&err.to_string())),
-                        ),
-                    }
-                }
-            }
-        };
-
-        let refresh_state = self.dashboard_refresh_state_value();
-        let status = if transient_error.is_some() || refresh_state.last_error.is_some() {
-            DashboardStatus::Degraded
-        } else if snapshot_needs_refresh(
-            &active_snapshot,
-            now,
-            self.inner.dashboard_snapshot_refresh_secs,
-        ) {
-            DashboardStatus::Stale
-        } else {
-            DashboardStatus::Ready
-        };
-
-        Ok((
-            active_snapshot.clone(),
-            AnalyticsMeta {
-                generated_at: now,
-                status,
-                source,
-                snapshot_generated_at: Some(active_snapshot.generated_at),
-                snapshot_age_seconds: Some(snapshot_age_seconds(&active_snapshot, now)),
-                data_window_from: Some(active_snapshot.data_window_from),
-                data_window_to: Some(active_snapshot.data_window_to),
-                refresh_in_progress: self
-                    .inner
-                    .dashboard_refresh_in_progress
-                    .load(Ordering::Relaxed),
-                last_refresh_attempt_at: refresh_state.last_attempt_at,
-                last_refresh_success_at: refresh_state
-                    .last_success_at
-                    .or(Some(active_snapshot.generated_at)),
-                last_refresh_error: transient_error.or(refresh_state.last_error),
-                notes,
-            },
-        ))
     }
 
     fn spawn_dashboard_snapshot_refresh(&self, name: String) {
@@ -762,14 +459,8 @@ impl QueryService {
     fn dashboard_full_snapshot_sync(&self, name: &str) -> Result<DashboardSnapshot> {
         let now = Utc::now();
         let window_to = floor_to_hour(now);
-        let window_from =
-            window_to - chrono::Duration::hours(self.inner.analytics_retention_days * 24);
-        let hourly_buckets = self.analytics_buckets_for_range(window_from, window_to)?;
-        let aggregate = aggregate_for_recent_hours(
-            &hourly_buckets,
-            window_to - chrono::Duration::hours(24),
-            window_to,
-        );
+        let window_from = window_to - chrono::Duration::hours(24);
+        let aggregate = self.dashboard_aggregate_for_range(window_from, window_to)?;
         Ok(DashboardSnapshot {
             version: DASHBOARD_SNAPSHOT_VERSION,
             name: name.to_string(),
@@ -777,7 +468,6 @@ impl QueryService {
             data_window_from: window_from,
             data_window_to: window_to,
             aggregate,
-            hourly_buckets,
         })
     }
 
@@ -792,54 +482,32 @@ impl QueryService {
         }
         let delta_from = snapshot.data_window_to;
         let delta_to = now;
-        let delta_buckets = self.analytics_buckets_for_range(delta_from, delta_to)?;
-        if delta_buckets.is_empty()
-            || delta_buckets
-                .iter()
-                .all(|bucket| bucket.aggregate.is_empty())
-        {
+        let delta = self.dashboard_aggregate_for_range(delta_from, delta_to)?;
+        if delta.is_empty() {
             return Ok(None);
         }
-        let merged_buckets = merge_analytics_buckets(
-            &snapshot.hourly_buckets,
-            &delta_buckets,
-            self.inner.analytics_retention_days,
-            delta_to,
-        );
-        let merged_aggregate = aggregate_for_recent_hours(
-            &merged_buckets,
-            delta_to - chrono::Duration::hours(24),
-            delta_to,
-        );
-        let merged_from =
-            delta_to - chrono::Duration::hours(self.inner.analytics_retention_days * 24);
         Ok(Some(DashboardSnapshot {
             version: DASHBOARD_SNAPSHOT_VERSION,
             name: name.to_string(),
             generated_at: Utc::now(),
-            data_window_from: merged_from,
+            data_window_from: snapshot.data_window_from,
             data_window_to: delta_to,
-            aggregate: merged_aggregate,
-            hourly_buckets: merged_buckets,
+            aggregate: snapshot.aggregate.merge(&delta),
         }))
     }
 
-    fn analytics_buckets_for_range(
+    fn dashboard_aggregate_for_range(
         &self,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-    ) -> Result<Vec<AnalyticsBucket>> {
-        if to <= from {
-            return Ok(Vec::new());
-        }
+    ) -> Result<DashboardAggregate> {
         let time_col = ident(&self.inner.fields.time_field);
         let action_col = ident(&self.inner.fields.action_field);
         let threat_col = ident(&self.inner.fields.threat_field);
         let user_col = ident(&self.inner.fields.user_field);
         let category_col = ident(&self.inner.fields.category_field);
         let device_col = ident(&self.inner.fields.device_field);
-        let source_ip_col = ident(&self.inner.fields.source_ip_field);
-        let destination_ip_col = ident(&self.inner.fields.server_ip_field);
+        let ip_col = ident(&self.inner.fields.source_ip_field);
         let dept_col = ident(&self.inner.fields.department_field);
         let resp_code_col = ident(&self.inner.fields.response_code_field);
         let reason_col = ident(&self.inner.fields.reason_field);
@@ -853,128 +521,107 @@ impl QueryService {
 
         let Some(parquet_src) = parquet_source_sql_for_range(&self.inner.parquet_root, from, to)?
         else {
-            return Ok(Vec::new());
+            return Ok(DashboardAggregate::default());
         };
 
         let conn = open_query_connection()?;
         let from_ts = from.format("%Y-%m-%d %H:%M:%S").to_string();
         let to_ts = to.format("%Y-%m-%d %H:%M:%S").to_string();
-        let mut buckets = empty_analytics_buckets(from, to);
-        populate_hourly_scalar_counts(
+
+        let events = scalar_i64(
             &conn,
-            &mut buckets,
-            HourlyScalarArgs {
-                parquet_src: parquet_src.as_str(),
-                time_col: &time_col,
-                action_col: &action_col,
-                threat_col: &threat_col,
-                from_ts: &from_ts,
-                to_ts: &to_ts,
-            },
+            &format!(
+                "SELECT COUNT(*) FROM {parquet_src} WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}'"
+            ),
         )?;
-        populate_hourly_group_counts(
+        let blocked = scalar_i64(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
+            &format!(
+                "SELECT COUNT(*) FROM {parquet_src} WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' AND CAST({action_col} AS VARCHAR) = 'Blocked'"
+            ),
+        )?;
+        let threats = scalar_i64(
+            &conn,
+            &format!(
+                "SELECT COUNT(*) FROM {parquet_src} WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' AND COALESCE(CAST({threat_col} AS VARCHAR),'') NOT IN ('', 'None', 'N/A')"
+            ),
+        )?;
+
+        let top_users = group_counts(
+            &conn,
+            GroupCountArgs {
                 field_col: &user_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_users,
         )?;
-        populate_hourly_group_counts(
+        let top_categories = group_counts(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
+            GroupCountArgs {
                 field_col: &category_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_categories,
         )?;
-        populate_hourly_group_counts(
+        let top_devices = group_counts(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
+            GroupCountArgs {
                 field_col: &device_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_devices,
         )?;
-        populate_hourly_group_counts(
+        let top_source_ips = group_counts(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
-                field_col: &source_ip_col,
+            GroupCountArgs {
+                field_col: &ip_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_source_ips,
         )?;
-        populate_hourly_group_counts(
+        let top_departments = group_counts(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
-                field_col: &destination_ip_col,
-                time_col: &time_col,
-                from_ts: &from_ts,
-                to_ts: &to_ts,
-                parquet_src: parquet_src.as_str(),
-            },
-            |aggregate| &mut aggregate.top_destination_ips,
-        )?;
-        populate_hourly_group_counts(
-            &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
+            GroupCountArgs {
                 field_col: &dept_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_departments,
         )?;
-        populate_hourly_group_counts(
+        let top_response_codes = group_counts(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
+            GroupCountArgs {
                 field_col: &resp_code_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_response_codes,
         )?;
-        populate_hourly_group_counts(
+        let top_policy_reasons = group_counts(
             &conn,
-            &mut buckets,
-            HourlyGroupCountArgs {
+            GroupCountArgs {
                 field_col: &reason_col,
                 time_col: &time_col,
                 from_ts: &from_ts,
                 to_ts: &to_ts,
                 parquet_src: parquet_src.as_str(),
             },
-            |aggregate| &mut aggregate.top_policy_reasons,
         )?;
-        if let (Some(src_col), Some(dst_col)) =
-            (src_country_col.as_deref(), dst_country_col.as_deref())
-        {
-            populate_hourly_country_flow_counts(
+
+        let country_flows = match (src_country_col.as_deref(), dst_country_col.as_deref()) {
+            (Some(src_col), Some(dst_col)) => country_flow_counts(
                 &conn,
-                &mut buckets,
-                HourlyCountryFlowCountArgs {
+                CountryFlowCountArgs {
                     src_country_col: src_col,
                     dst_country_col: dst_col,
                     time_col: &time_col,
@@ -982,14 +629,23 @@ impl QueryService {
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
                 },
-            )?;
-        }
+            )?,
+            _ => BTreeMap::new(),
+        };
 
-        let mut out = buckets.into_values().collect::<Vec<_>>();
-        for bucket in &mut out {
-            bucket.aggregate.trim_top_n(self.inner.analytics_top_n);
-        }
-        Ok(out)
+        Ok(DashboardAggregate {
+            events,
+            blocked,
+            threats,
+            top_users,
+            top_categories,
+            top_devices,
+            top_source_ips,
+            top_departments,
+            top_response_codes,
+            top_policy_reasons,
+            country_flows,
+        })
     }
 
     fn render_dashboard_snapshot(
@@ -1077,12 +733,7 @@ impl QueryService {
             source: source.to_string(),
             snapshot_generated_at: Some(snapshot.generated_at),
             snapshot_age_seconds: Some(snapshot_age_seconds(snapshot, now)),
-            data_window_from: Some(
-                snapshot
-                    .data_window_to
-                    .max(snapshot.data_window_from + chrono::Duration::hours(24))
-                    - chrono::Duration::hours(24),
-            ),
+            data_window_from: Some(snapshot.data_window_from),
             data_window_to: Some(snapshot.data_window_to),
             refresh_in_progress: self
                 .inner
@@ -1205,7 +856,7 @@ impl QueryService {
             }
         }
 
-        let path = dashboard_snapshot_path(&self.inner.analytics_snapshot_dir, name);
+        let path = dashboard_snapshot_path(&self.inner.dashboard_snapshot_dir, name);
         if !path.exists() {
             return Ok(None);
         }
@@ -1226,13 +877,13 @@ impl QueryService {
     }
 
     fn dashboard_snapshot_put(&self, snapshot: DashboardSnapshot) -> Result<()> {
-        std::fs::create_dir_all(&self.inner.analytics_snapshot_dir).with_context(|| {
+        std::fs::create_dir_all(&self.inner.dashboard_snapshot_dir).with_context(|| {
             format!(
-                "failed creating analytics snapshot dir {}",
-                self.inner.analytics_snapshot_dir.display()
+                "failed creating dashboard snapshot dir {}",
+                self.inner.dashboard_snapshot_dir.display()
             )
         })?;
-        let path = dashboard_snapshot_path(&self.inner.analytics_snapshot_dir, &snapshot.name);
+        let path = dashboard_snapshot_path(&self.inner.dashboard_snapshot_dir, &snapshot.name);
         let tmp_path = path.with_extension("json.tmp");
         let raw = serde_json::to_vec_pretty(&snapshot)?;
         std::fs::write(&tmp_path, raw)
@@ -1254,7 +905,7 @@ impl QueryService {
     }
 }
 
-struct HourlyGroupCountArgs<'a> {
+struct GroupCountArgs<'a> {
     field_col: &'a str,
     time_col: &'a str,
     from_ts: &'a str,
@@ -1262,16 +913,7 @@ struct HourlyGroupCountArgs<'a> {
     parquet_src: &'a str,
 }
 
-struct HourlyScalarArgs<'a> {
-    parquet_src: &'a str,
-    time_col: &'a str,
-    action_col: &'a str,
-    threat_col: &'a str,
-    from_ts: &'a str,
-    to_ts: &'a str,
-}
-
-struct HourlyCountryFlowCountArgs<'a> {
+struct CountryFlowCountArgs<'a> {
     src_country_col: &'a str,
     dst_country_col: &'a str,
     time_col: &'a str,
@@ -1280,60 +922,13 @@ struct HourlyCountryFlowCountArgs<'a> {
     parquet_src: &'a str,
 }
 
-fn populate_hourly_scalar_counts(
-    conn: &Connection,
-    buckets: &mut BTreeMap<DateTime<Utc>, AnalyticsBucket>,
-    args: HourlyScalarArgs<'_>,
-) -> Result<()> {
+fn group_counts(conn: &Connection, args: GroupCountArgs<'_>) -> Result<BTreeMap<String, i64>> {
     let sql = format!(
-        "SELECT \
-            STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
-            COUNT(*) AS events, \
-            SUM(CASE WHEN CAST({action_col} AS VARCHAR) = 'Blocked' THEN 1 ELSE 0 END) AS blocked, \
-            SUM(CASE WHEN COALESCE(CAST({threat_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') THEN 1 ELSE 0 END) AS threats \
+        "SELECT COALESCE(CAST({field_col} AS VARCHAR), 'None') AS value, COUNT(*) AS cnt \
          FROM {parquet_src} \
          WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' \
            AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
          GROUP BY 1",
-        parquet_src = args.parquet_src,
-        time_col = args.time_col,
-        action_col = args.action_col,
-        threat_col = args.threat_col,
-        from_ts = args.from_ts,
-        to_ts = args.to_ts,
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut rows = stmt.query([])?;
-    while let Some(row) = rows.next()? {
-        let bucket = parse_bucket_hour(row.get::<_, Option<String>>(0)?)?;
-        let Some(entry) = buckets.get_mut(&bucket) else {
-            continue;
-        };
-        entry.aggregate.events = row.get::<_, i64>(1)?;
-        entry.aggregate.blocked = row.get::<_, i64>(2)?;
-        entry.aggregate.threats = row.get::<_, i64>(3)?;
-    }
-    Ok(())
-}
-
-fn populate_hourly_group_counts<F>(
-    conn: &Connection,
-    buckets: &mut BTreeMap<DateTime<Utc>, AnalyticsBucket>,
-    args: HourlyGroupCountArgs<'_>,
-    select_map: F,
-) -> Result<()>
-where
-    F: Fn(&mut DashboardAggregate) -> &mut BTreeMap<String, i64>,
-{
-    let sql = format!(
-        "SELECT \
-            STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
-            COALESCE(CAST({field_col} AS VARCHAR), 'None') AS value, \
-            COUNT(*) AS cnt \
-         FROM {parquet_src} \
-         WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' \
-           AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
-         GROUP BY 1, 2",
         field_col = args.field_col,
         parquet_src = args.parquet_src,
         time_col = args.time_col,
@@ -1342,28 +937,21 @@ where
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([])?;
+    let mut out = BTreeMap::new();
     while let Some(row) = rows.next()? {
-        let bucket = parse_bucket_hour(row.get::<_, Option<String>>(0)?)?;
-        let Some(entry) = buckets.get_mut(&bucket) else {
-            continue;
-        };
-        let value = row
-            .get::<_, Option<String>>(1)?
-            .unwrap_or_else(|| "None".to_string());
-        let count = row.get::<_, i64>(2)?;
-        select_map(&mut entry.aggregate).insert(value, count);
+        let value: Option<String> = row.get(0)?;
+        let count: i64 = row.get(1)?;
+        out.insert(value.unwrap_or_else(|| "None".to_string()), count);
     }
-    Ok(())
+    Ok(out)
 }
 
-fn populate_hourly_country_flow_counts(
+fn country_flow_counts(
     conn: &Connection,
-    buckets: &mut BTreeMap<DateTime<Utc>, AnalyticsBucket>,
-    args: HourlyCountryFlowCountArgs<'_>,
-) -> Result<()> {
+    args: CountryFlowCountArgs<'_>,
+) -> Result<BTreeMap<String, i64>> {
     let sql = format!(
         "SELECT \
-            STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
             CAST({src_country_col} AS VARCHAR) AS source_country, \
             CAST({dst_country_col} AS VARCHAR) AS destination_country, \
             COUNT(*) AS cnt \
@@ -1372,7 +960,7 @@ fn populate_hourly_country_flow_counts(
            AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
            AND COALESCE(CAST({src_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
            AND COALESCE(CAST({dst_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
-         GROUP BY 1, 2, 3",
+         GROUP BY 1, 2",
         src_country_col = args.src_country_col,
         dst_country_col = args.dst_country_col,
         parquet_src = args.parquet_src,
@@ -1382,84 +970,21 @@ fn populate_hourly_country_flow_counts(
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([])?;
+    let mut out = BTreeMap::new();
     while let Some(row) = rows.next()? {
-        let bucket = parse_bucket_hour(row.get::<_, Option<String>>(0)?)?;
-        let Some(entry) = buckets.get_mut(&bucket) else {
-            continue;
-        };
-        let src = row
-            .get::<_, Option<String>>(1)?
-            .unwrap_or_else(|| "None".to_string());
-        let dst = row
-            .get::<_, Option<String>>(2)?
-            .unwrap_or_else(|| "None".to_string());
-        let count = row.get::<_, i64>(3)?;
-        entry
-            .aggregate
-            .country_flows
-            .insert(format!("{src}\u{001f}{dst}"), count);
-    }
-    Ok(())
-}
-
-fn empty_analytics_buckets(
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-) -> BTreeMap<DateTime<Utc>, AnalyticsBucket> {
-    let mut buckets = BTreeMap::new();
-    let mut cursor = floor_to_hour(from);
-    while cursor < to {
-        buckets.insert(
-            cursor,
-            AnalyticsBucket {
-                hour: cursor,
-                aggregate: DashboardAggregate::default(),
-            },
+        let src: Option<String> = row.get(0)?;
+        let dst: Option<String> = row.get(1)?;
+        let count: i64 = row.get(2)?;
+        out.insert(
+            format!(
+                "{}\u{001f}{}",
+                src.unwrap_or_else(|| "None".to_string()),
+                dst.unwrap_or_else(|| "None".to_string())
+            ),
+            count,
         );
-        cursor += chrono::Duration::hours(1);
     }
-    buckets
-}
-
-fn merge_analytics_buckets(
-    base: &[AnalyticsBucket],
-    delta: &[AnalyticsBucket],
-    retention_days: i64,
-    now: DateTime<Utc>,
-) -> Vec<AnalyticsBucket> {
-    let mut merged = BTreeMap::new();
-    for bucket in base.iter().chain(delta.iter()) {
-        merged
-            .entry(bucket.hour)
-            .and_modify(|existing: &mut AnalyticsBucket| {
-                existing.aggregate = existing.aggregate.merge(&bucket.aggregate);
-            })
-            .or_insert_with(|| bucket.clone());
-    }
-    let cutoff = floor_to_hour(now) - chrono::Duration::hours(retention_days * 24);
-    merged.retain(|hour, _| *hour >= cutoff);
-    merged.into_values().collect()
-}
-
-fn aggregate_for_recent_hours(
-    buckets: &[AnalyticsBucket],
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-) -> DashboardAggregate {
-    let mut aggregate = DashboardAggregate::default();
-    for bucket in buckets {
-        if bucket.hour >= from && bucket.hour < to {
-            aggregate = aggregate.merge(&bucket.aggregate);
-        }
-    }
-    aggregate
-}
-
-fn parse_bucket_hour(value: Option<String>) -> Result<DateTime<Utc>> {
-    let raw = value.ok_or_else(|| anyhow::anyhow!("hour bucket is missing"))?;
-    let parsed = chrono::NaiveDateTime::parse_from_str(&raw, "%Y-%m-%d %H:%M:%S")
-        .with_context(|| format!("invalid hour bucket '{raw}'"))?;
-    Ok(DateTime::<Utc>::from_naive_utc_and_offset(parsed, Utc))
+    Ok(out)
 }
 
 fn empty_top_table(name: &str) -> TableBlock {
@@ -1492,7 +1017,6 @@ impl DashboardAggregate {
             && self.top_devices.is_empty()
             && self.top_source_ips.is_empty()
             && self.top_departments.is_empty()
-            && self.top_destination_ips.is_empty()
             && self.top_response_codes.is_empty()
             && self.top_policy_reasons.is_empty()
             && self.country_flows.is_empty()
@@ -1508,26 +1032,10 @@ impl DashboardAggregate {
             top_devices: merged_counts(&self.top_devices, &delta.top_devices),
             top_source_ips: merged_counts(&self.top_source_ips, &delta.top_source_ips),
             top_departments: merged_counts(&self.top_departments, &delta.top_departments),
-            top_destination_ips: merged_counts(
-                &self.top_destination_ips,
-                &delta.top_destination_ips,
-            ),
             top_response_codes: merged_counts(&self.top_response_codes, &delta.top_response_codes),
             top_policy_reasons: merged_counts(&self.top_policy_reasons, &delta.top_policy_reasons),
             country_flows: merged_counts(&self.country_flows, &delta.country_flows),
         }
-    }
-
-    fn trim_top_n(&mut self, top_n: usize) {
-        trim_count_map(&mut self.top_users, top_n);
-        trim_count_map(&mut self.top_categories, top_n);
-        trim_count_map(&mut self.top_devices, top_n);
-        trim_count_map(&mut self.top_source_ips, top_n);
-        trim_count_map(&mut self.top_departments, top_n);
-        trim_count_map(&mut self.top_destination_ips, top_n);
-        trim_count_map(&mut self.top_response_codes, top_n);
-        trim_count_map(&mut self.top_policy_reasons, top_n);
-        trim_count_map(&mut self.country_flows, top_n);
     }
 }
 
@@ -1540,16 +1048,6 @@ fn merged_counts(
         *merged.entry(key.clone()).or_insert(0) += *value;
     }
     merged
-}
-
-fn trim_count_map(counts: &mut BTreeMap<String, i64>, limit: usize) {
-    if counts.len() <= limit {
-        return;
-    }
-    let trimmed = top_rows_from_counts(counts, limit)
-        .into_iter()
-        .collect::<BTreeMap<_, _>>();
-    *counts = trimmed;
 }
 
 fn empty_dashboard_response(
@@ -1602,36 +1100,14 @@ fn empty_dashboard_response(
     }
 }
 
-fn empty_analytics_snapshot(
-    name: &str,
-    now: DateTime<Utc>,
-    retention_days: i64,
-) -> DashboardSnapshot {
-    let window_to = floor_to_hour(now);
-    let window_from = window_to - chrono::Duration::hours(retention_days * 24);
-    DashboardSnapshot {
-        version: DASHBOARD_SNAPSHOT_VERSION,
-        name: name.to_string(),
-        generated_at: now,
-        data_window_from: window_from,
-        data_window_to: window_to,
-        aggregate: DashboardAggregate::default(),
-        hourly_buckets: Vec::new(),
-    }
-}
-
 fn default_dashboard_notes(
     snapshot: &DashboardSnapshot,
     now: DateTime<Utc>,
     refresh_secs: u64,
 ) -> Vec<String> {
-    let dashboard_from = snapshot
-        .data_window_to
-        .max(snapshot.data_window_from + chrono::Duration::hours(24))
-        - chrono::Duration::hours(24);
     let mut notes = vec![format!(
         "Hourly snapshot covers {} to {} UTC.",
-        dashboard_from.format("%Y-%m-%d %H:%M"),
+        snapshot.data_window_from.format("%Y-%m-%d %H:%M"),
         snapshot.data_window_to.format("%Y-%m-%d %H:%M")
     )];
     if snapshot.aggregate.is_empty() {
@@ -1645,33 +1121,6 @@ fn default_dashboard_notes(
     } else {
         notes.push(
             "Use Refresh to merge newer finalized parquet data without waiting for the next hourly snapshot."
-                .to_string(),
-        );
-    }
-    notes
-}
-
-fn analytics_default_notes(
-    snapshot: &DashboardSnapshot,
-    now: DateTime<Utc>,
-    refresh_secs: u64,
-) -> Vec<String> {
-    let mut notes = vec![format!(
-        "Aggregate snapshot covers {} to {} UTC.",
-        snapshot.data_window_from.format("%Y-%m-%d %H:%M"),
-        snapshot.data_window_to.format("%Y-%m-%d %H:%M")
-    )];
-    if snapshot.aggregate.is_empty() {
-        notes.push(
-            "No finalized parquet rows were available in the current aggregate snapshot."
-                .to_string(),
-        );
-    }
-    if snapshot_needs_refresh(snapshot, now, refresh_secs) {
-        notes.push("Aggregate snapshot is older than the normal hourly cadence. A background rebuild has been scheduled.".to_string());
-    } else {
-        notes.push(
-            "Use refresh=delta to merge newer finalized parquet data without waiting for the next hourly rebuild."
                 .to_string(),
         );
     }
@@ -1712,6 +1161,14 @@ fn trim_dashboard_error_message(message: &str) -> String {
         out.push_str("...");
     }
     out
+}
+
+fn dashboard_snapshot_dir(cfg: &AppConfig) -> PathBuf {
+    cfg.audit
+        .path
+        .parent()
+        .unwrap_or_else(|| Path::new("/var/lib/nss-quarry"))
+        .join("dashboard-cache")
 }
 
 fn dashboard_snapshot_path(root: &Path, name: &str) -> PathBuf {
@@ -1767,151 +1224,14 @@ fn top_rows_from_counts(counts: &BTreeMap<String, i64>, limit: usize) -> Vec<(St
     rows
 }
 
-#[derive(Debug, Clone)]
-struct AnalyticsSeriesSelector {
-    raw: String,
-    label: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum AnalyticsDimension {
-    ResponseCode,
-    PolicyReason,
-    Category,
-    User,
-    Device,
-    DestinationIp,
-    SourceIp,
-    Department,
-}
-
-impl AnalyticsDimension {
-    fn parse(value: &str) -> Result<Self> {
-        match value.trim() {
-            "response_code" => Ok(Self::ResponseCode),
-            "policy_reason" => Ok(Self::PolicyReason),
-            "category" => Ok(Self::Category),
-            "user" => Ok(Self::User),
-            "device" => Ok(Self::Device),
-            "destination_ip" | "server_ip" => Ok(Self::DestinationIp),
-            "source_ip" => Ok(Self::SourceIp),
-            "department" => Ok(Self::Department),
-            other => anyhow::bail!("unsupported analytics dimension '{other}'"),
-        }
-    }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::ResponseCode => "response_code",
-            Self::PolicyReason => "policy_reason",
-            Self::Category => "category",
-            Self::User => "user",
-            Self::Device => "device",
-            Self::DestinationIp => "destination_ip",
-            Self::SourceIp => "source_ip",
-            Self::Department => "department",
-        }
-    }
-
-    fn is_sensitive_for_helpdesk(&self) -> bool {
-        matches!(self, Self::User | Self::Device | Self::SourceIp)
-    }
-}
-
-fn analytics_dimension_counts(
-    aggregate: &DashboardAggregate,
-    dimension: AnalyticsDimension,
-) -> &BTreeMap<String, i64> {
-    match dimension {
-        AnalyticsDimension::ResponseCode => &aggregate.top_response_codes,
-        AnalyticsDimension::PolicyReason => &aggregate.top_policy_reasons,
-        AnalyticsDimension::Category => &aggregate.top_categories,
-        AnalyticsDimension::User => &aggregate.top_users,
-        AnalyticsDimension::Device => &aggregate.top_devices,
-        AnalyticsDimension::DestinationIp => &aggregate.top_destination_ips,
-        AnalyticsDimension::SourceIp => &aggregate.top_source_ips,
-        AnalyticsDimension::Department => &aggregate.top_departments,
-    }
-}
-
-fn analytics_count_rows(
-    counts: &BTreeMap<String, i64>,
-    limit: usize,
-    role: RoleName,
-    redact_for_helpdesk: bool,
-) -> Vec<AnalyticsCountRow> {
-    top_rows_from_counts(counts, limit)
-        .into_iter()
-        .map(|(value, count)| AnalyticsCountRow {
-            value: if role == RoleName::Helpdesk && redact_for_helpdesk {
-                "[REDACTED]".to_string()
-            } else {
-                value
-            },
-            count,
-        })
-        .collect()
-}
-
-fn analytics_series_list(values: &[String]) -> Result<Vec<AnalyticsSeriesSelector>> {
-    let mut out = Vec::new();
-    for raw in values {
-        let value = raw.trim();
-        if value.is_empty() {
-            continue;
-        }
-        if matches!(value, "events" | "blocked" | "threats") {
-            out.push(AnalyticsSeriesSelector {
-                raw: value.to_string(),
-                label: value.replace('_', " "),
-            });
-            continue;
-        }
-        if let Some((kind, needle)) = value.split_once(':') {
-            let label = format!("{}={}", kind, needle);
-            match kind {
-                "response_code" | "policy_reason" | "category" | "user" | "device"
-                | "destination_ip" | "server_ip" | "source_ip" | "department" => {
-                    out.push(AnalyticsSeriesSelector {
-                        raw: value.to_string(),
-                        label,
-                    });
-                    continue;
-                }
-                _ => {}
-            }
-        }
-        anyhow::bail!("unsupported analytics series '{value}'");
-    }
-    if out.is_empty() {
-        anyhow::bail!("at least one analytics series is required");
-    }
-    Ok(out)
-}
-
-fn analytics_series_value(aggregate: &DashboardAggregate, series: &AnalyticsSeriesSelector) -> i64 {
-    match series.raw.as_str() {
-        "events" => aggregate.events,
-        "blocked" => aggregate.blocked,
-        "threats" => aggregate.threats,
-        _ => {
-            if let Some((kind, needle)) = series.raw.split_once(':') {
-                let counts = match AnalyticsDimension::parse(kind) {
-                    Ok(AnalyticsDimension::ResponseCode) => &aggregate.top_response_codes,
-                    Ok(AnalyticsDimension::PolicyReason) => &aggregate.top_policy_reasons,
-                    Ok(AnalyticsDimension::Category) => &aggregate.top_categories,
-                    Ok(AnalyticsDimension::User) => &aggregate.top_users,
-                    Ok(AnalyticsDimension::Device) => &aggregate.top_devices,
-                    Ok(AnalyticsDimension::DestinationIp) => &aggregate.top_destination_ips,
-                    Ok(AnalyticsDimension::SourceIp) => &aggregate.top_source_ips,
-                    Ok(AnalyticsDimension::Department) => &aggregate.top_departments,
-                    Err(_) => return 0,
-                };
-                counts.get(needle).copied().unwrap_or(0)
-            } else {
-                0
-            }
-        }
+fn scalar_i64(conn: &Connection, sql: &str) -> Result<i64> {
+    let mut stmt = conn.prepare(sql)?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        let v: i64 = row.get(0)?;
+        Ok(v)
+    } else {
+        Ok(0)
     }
 }
 
@@ -2533,7 +1853,6 @@ mod tests {
     use chrono::TimeZone;
 
     use super::*;
-    use crate::config::AppConfig;
 
     #[test]
     fn validate_time_window_rejects_inverted_range() {
@@ -2806,7 +2125,6 @@ mod tests {
             data_window_from: Utc.with_ymd_and_hms(2026, 4, 4, 11, 0, 0).unwrap(),
             data_window_to: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
             aggregate: DashboardAggregate::default(),
-            hourly_buckets: Vec::new(),
         };
         assert!(!snapshot_needs_refresh(&snapshot, now, 3600));
         assert_eq!(snapshot_age_seconds(&snapshot, now), 900);
@@ -2822,7 +2140,6 @@ mod tests {
             data_window_from: Utc.with_ymd_and_hms(2026, 4, 4, 12, 0, 0).unwrap(),
             data_window_to: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
             aggregate: DashboardAggregate::default(),
-            hourly_buckets: Vec::new(),
         };
         assert!(snapshot_needs_refresh(&snapshot, now, 3600));
     }
@@ -2841,155 +2158,5 @@ mod tests {
         assert_eq!(csv_escape(" \t+SUM(A1:A2)"), "' \t+SUM(A1:A2)");
         assert_eq!(csv_escape("@malicious"), "'@malicious");
         assert_eq!(csv_escape("normal-value"), "normal-value");
-    }
-
-    fn test_query_service() -> QueryService {
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!("nss-quarry-analytics-test-{unique}"));
-        std::fs::create_dir_all(root.join("parquet")).expect("mkdir parquet");
-        std::fs::create_dir_all(root.join("analytics-cache")).expect("mkdir analytics");
-        let mut cfg = AppConfig::default();
-        cfg.data.parquet_root = root.join("parquet");
-        cfg.query.analytics_cache_dir = root.join("analytics-cache");
-        cfg.query.analytics_retention_days = 14;
-        cfg.query.analytics_top_n = 50;
-        QueryService::new(&cfg).expect("query service")
-    }
-
-    fn sample_snapshot() -> DashboardSnapshot {
-        DashboardSnapshot {
-            version: DASHBOARD_SNAPSHOT_VERSION,
-            name: "overview".to_string(),
-            generated_at: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
-            data_window_from: Utc.with_ymd_and_hms(2026, 4, 4, 12, 0, 0).unwrap(),
-            data_window_to: Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap(),
-            aggregate: DashboardAggregate {
-                events: 16,
-                blocked: 5,
-                threats: 2,
-                top_users: BTreeMap::from([
-                    ("alice@example.com".to_string(), 10),
-                    ("bob@example.com".to_string(), 6),
-                ]),
-                top_categories: BTreeMap::from([("Internet Services".to_string(), 16)]),
-                top_devices: BTreeMap::from([
-                    ("device-a".to_string(), 9),
-                    ("device-b".to_string(), 7),
-                ]),
-                top_source_ips: BTreeMap::from([("10.0.0.10".to_string(), 16)]),
-                top_departments: BTreeMap::from([("IT".to_string(), 16)]),
-                top_destination_ips: BTreeMap::from([
-                    ("1.1.1.1".to_string(), 9),
-                    ("8.8.8.8".to_string(), 7),
-                ]),
-                top_response_codes: BTreeMap::from([
-                    ("200".to_string(), 11),
-                    ("403".to_string(), 5),
-                ]),
-                top_policy_reasons: BTreeMap::from([
-                    ("Allowed".to_string(), 11),
-                    ("Not allowed to browse this category".to_string(), 5),
-                ]),
-                country_flows: BTreeMap::new(),
-            },
-            hourly_buckets: vec![
-                AnalyticsBucket {
-                    hour: Utc.with_ymd_and_hms(2026, 4, 5, 10, 0, 0).unwrap(),
-                    aggregate: DashboardAggregate {
-                        events: 10,
-                        blocked: 2,
-                        threats: 1,
-                        top_users: BTreeMap::from([("alice@example.com".to_string(), 10)]),
-                        top_categories: BTreeMap::from([("Internet Services".to_string(), 10)]),
-                        top_devices: BTreeMap::from([("device-a".to_string(), 10)]),
-                        top_source_ips: BTreeMap::from([("10.0.0.10".to_string(), 10)]),
-                        top_departments: BTreeMap::from([("IT".to_string(), 10)]),
-                        top_destination_ips: BTreeMap::from([("1.1.1.1".to_string(), 10)]),
-                        top_response_codes: BTreeMap::from([
-                            ("200".to_string(), 8),
-                            ("403".to_string(), 2),
-                        ]),
-                        top_policy_reasons: BTreeMap::from([
-                            ("Allowed".to_string(), 8),
-                            ("Not allowed to browse this category".to_string(), 2),
-                        ]),
-                        country_flows: BTreeMap::new(),
-                    },
-                },
-                AnalyticsBucket {
-                    hour: Utc.with_ymd_and_hms(2026, 4, 5, 11, 0, 0).unwrap(),
-                    aggregate: DashboardAggregate {
-                        events: 6,
-                        blocked: 3,
-                        threats: 1,
-                        top_users: BTreeMap::from([("bob@example.com".to_string(), 6)]),
-                        top_categories: BTreeMap::from([("Internet Services".to_string(), 6)]),
-                        top_devices: BTreeMap::from([("device-b".to_string(), 6)]),
-                        top_source_ips: BTreeMap::from([("10.0.0.10".to_string(), 6)]),
-                        top_departments: BTreeMap::from([("IT".to_string(), 6)]),
-                        top_destination_ips: BTreeMap::from([("8.8.8.8".to_string(), 6)]),
-                        top_response_codes: BTreeMap::from([
-                            ("200".to_string(), 3),
-                            ("403".to_string(), 3),
-                        ]),
-                        top_policy_reasons: BTreeMap::from([
-                            ("Allowed".to_string(), 3),
-                            ("Not allowed to browse this category".to_string(), 3),
-                        ]),
-                        country_flows: BTreeMap::new(),
-                    },
-                },
-            ],
-        }
-    }
-
-    #[tokio::test]
-    async fn analytics_top_redacts_helpdesk_sensitive_dimensions() {
-        let svc = test_query_service();
-        svc.dashboard_snapshot_put(sample_snapshot())
-            .expect("write snapshot");
-        let from = Utc.with_ymd_and_hms(2026, 4, 5, 10, 0, 0).unwrap();
-        let to = Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap();
-        let response = svc
-            .analytics_top(
-                RoleName::Helpdesk,
-                from,
-                to,
-                "user",
-                10,
-                DashboardRefreshMode::Normal,
-            )
-            .await
-            .expect("analytics top");
-        assert_eq!(response.rows.len(), 2);
-        assert!(response.rows.iter().all(|row| row.value == "[REDACTED]"));
-    }
-
-    #[tokio::test]
-    async fn analytics_timeseries_returns_hourly_points() {
-        let svc = test_query_service();
-        svc.dashboard_snapshot_put(sample_snapshot())
-            .expect("write snapshot");
-        let from = Utc.with_ymd_and_hms(2026, 4, 5, 10, 0, 0).unwrap();
-        let to = Utc.with_ymd_and_hms(2026, 4, 5, 12, 0, 0).unwrap();
-        let response = svc
-            .analytics_timeseries(
-                RoleName::Analyst,
-                from,
-                to,
-                &["events".to_string(), "response_code:403".to_string()],
-                DashboardRefreshMode::Normal,
-            )
-            .await
-            .expect("analytics timeseries");
-        assert_eq!(response.series.len(), 2);
-        assert_eq!(response.series[0].points.len(), 2);
-        assert_eq!(response.series[0].points[0].value, 10);
-        assert_eq!(response.series[0].points[1].value, 6);
-        assert_eq!(response.series[1].points[0].value, 2);
-        assert_eq!(response.series[1].points[1].value, 3);
     }
 }

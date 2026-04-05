@@ -33,9 +33,6 @@ impl AppConfig {
         if cfg.audit.path.is_relative() {
             cfg.audit.path = base.join(&cfg.audit.path);
         }
-        if cfg.query.analytics_cache_dir.is_relative() {
-            cfg.query.analytics_cache_dir = base.join(&cfg.query.analytics_cache_dir);
-        }
         cfg.validate()?;
         Ok(cfg)
     }
@@ -55,12 +52,6 @@ impl AppConfig {
         }
         if self.query.dashboard_snapshot_refresh_secs == 0 {
             anyhow::bail!("query.dashboard_snapshot_refresh_secs must be > 0");
-        }
-        if self.query.analytics_retention_days == 0 {
-            anyhow::bail!("query.analytics_retention_days must be > 0");
-        }
-        if self.query.analytics_top_n == 0 {
-            anyhow::bail!("query.analytics_top_n must be > 0");
         }
         if self.ingestor.base_url.trim().is_empty() {
             anyhow::bail!("ingestor.base_url cannot be empty");
@@ -446,9 +437,6 @@ pub struct QueryConfig {
     pub max_rows: u32,
     pub timeout_ms: u64,
     pub dashboard_snapshot_refresh_secs: u64,
-    pub analytics_retention_days: i64,
-    pub analytics_top_n: usize,
-    pub analytics_cache_dir: PathBuf,
     pub default_columns: Vec<String>,
 }
 
@@ -460,9 +448,6 @@ impl Default for QueryConfig {
             max_rows: 2000,
             timeout_ms: 120_000,
             dashboard_snapshot_refresh_secs: 3600,
-            analytics_retention_days: 14,
-            analytics_top_n: 50,
-            analytics_cache_dir: PathBuf::from("/var/lib/nss-quarry/analytics-cache"),
             default_columns: vec![
                 "time".to_string(),
                 "action".to_string(),

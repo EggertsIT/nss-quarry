@@ -72,9 +72,6 @@ default_limit = 200
 max_rows = 2000
 timeout_ms = 120000
 dashboard_snapshot_refresh_secs = 3600
-analytics_retention_days = 14
-analytics_top_n = 50
-analytics_cache_dir = "/var/lib/nss-quarry/analytics-cache"
 default_columns = ["time", "action", "url", "login", "cip", "urlcat", "threatname", "rulelabel"]
 
 [audit]
