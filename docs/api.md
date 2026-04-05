@@ -161,7 +161,6 @@ Typical error status codes:
 | `POST` | `/api/search` | `helpdesk+` | search logs |
 | `POST` | `/api/summary/support` | `helpdesk+` | generate a structured support summary from a bounded search |
 | `POST` | `/api/export/csv` | `helpdesk+` | export search results as CSV |
-| `POST` | `/api/export/pdf-summary` | `helpdesk+` | export a support-summary PDF for the current search window |
 | `POST` | `/api/integrations/servicenow/investigations` | `analyst+` API token | submit async ServiceNow investigation |
 | `GET` | `/api/integrations/servicenow/jobs/{job_id}` | `analyst+` API token | check ServiceNow investigation status |
 | `GET` | `/api/integrations/servicenow/jobs/{job_id}/result` | `analyst+` API token | fetch completed ServiceNow investigation result |
@@ -540,49 +539,6 @@ print("saved", len(response.content), "bytes")
 Response headers:
 - `Content-Type: text/csv; charset=utf-8`
 - `Content-Disposition: attachment; filename="nss-quarry-export.csv"`
-
-### `POST /api/export/pdf-summary`
-
-Builds a support-summary PDF from the same bounded search window and optional PCAP context used by `POST /api/summary/support`.
-
-Request body:
-
-```json
-{
-  "search": {
-    "time_from": "2026-04-04T18:00:00Z",
-    "time_to": "2026-04-04T19:00:00Z",
-    "filters": {
-      "server_ip": "1.1.1.1,8.8.8.8",
-      "reason": "Not allowed to browse this category"
-    },
-    "limit": 500
-  },
-  "pcap_context": null
-}
-```
-
-Python:
-
-```python
-payload = {
-    "search": {
-        "time_from": "2026-04-04T18:00:00Z",
-        "time_to": "2026-04-04T19:00:00Z",
-        "filters": {"action": "Blocked"},
-        "limit": 500,
-    },
-    "pcap_context": None,
-}
-
-response = require_ok(session.post(f"{BASE_URL}/api/export/pdf-summary", json=payload))
-Path("nss-quarry-summary.pdf").write_bytes(response.content)
-print("saved", len(response.content), "bytes")
-```
-
-Response headers:
-- `Content-Type: application/pdf`
-- `Content-Disposition: attachment; filename="nss-quarry-summary-<timestamp>.pdf"`
 
 ### ServiceNow Integration APIs
 

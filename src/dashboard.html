@@ -1173,10 +1173,7 @@
       <div class="panel panel-full-bleed" style="margin-top: 14px;">
         <div class="section-header">
           <h3>Search Results</h3>
-          <div>
-            <button id="export-csv" type="button" class="ghost">Export Logs (CSV)</button>
-            <button id="export-pdf-summary" type="button" class="ghost">Export Summary (PDF)</button>
-          </div>
+          <button id="export-csv" type="button" class="ghost">Export Logs (CSV)</button>
         </div>
         <div class="muted" id="result-meta"></div>
         <div id="results" class="table-wrap results-table-wrap" style="margin-top: 8px;"></div>
@@ -3047,34 +3044,6 @@
       setMessage("search-msg", "CSV export downloaded.", true);
     }
 
-    async function exportPdfSummary() {
-      setMessage("search-msg", "");
-      const req = latestSearchRequest || buildSearchRequestFromForm();
-      const body = buildSupportSummaryRequest(req);
-      const res = await fetch("/api/export/pdf-summary", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let msg = `${res.status} ${res.statusText}`;
-        try {
-          const e = await res.json();
-          if (e.error) msg = e.error;
-        } catch (_) {}
-        throw new Error(msg);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "nss-quarry-summary.pdf";
-      a.click();
-      URL.revokeObjectURL(url);
-      setMessage("search-msg", "PDF summary downloaded.", true);
-    }
-
     async function analyzePcapAndApply() {
       const fileInput = $("pcap-file");
       const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
@@ -3553,9 +3522,6 @@
       });
       $("export-csv").addEventListener("click", async () => {
         try { await exportCsv(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }
-      });
-      $("export-pdf-summary").addEventListener("click", async () => {
-        try { await exportPdfSummary(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }
       });
       $("vf-save").addEventListener("click", async () => {
         try {
