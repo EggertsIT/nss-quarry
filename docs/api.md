@@ -159,6 +159,7 @@ Typical error status codes:
 | `GET` | `/api/me` | `helpdesk+` | current authenticated user |
 | `GET` | `/authz/ingestor` | `admin` | admin gate check used for ingestor UI |
 | `POST` | `/api/search` | `helpdesk+` | search logs |
+| `POST` | `/api/summary/support` | `helpdesk+` | generate a structured support summary from a bounded search |
 | `POST` | `/api/export/csv` | `helpdesk+` | export search results as CSV |
 | `POST` | `/api/pcap/analyze` | `helpdesk+` | analyze `.pcap` or `.pcapng` |
 | `GET` | `/api/dashboards/{name}` | `helpdesk+` | 24h dashboard aggregate payload |
@@ -446,6 +447,67 @@ Example response:
   "truncated": false
 }
 ```
+
+### `POST /api/summary/support`
+
+Runs a bounded server-side search and returns a structured support summary suitable for helpdesk triage.
+
+Request fields:
+- `search`: required `POST /api/search` request object
+- `pcap_context`: optional bounded metadata about a prior PCAP analysis
+
+Behavior:
+- reuses the same time window and filters as the provided search request
+- does not rely on the UI-visible column list; the server adds the summary columns it needs from the live Parquet schema
+- respects helpdesk masking and admin visibility filters before summary generation
+- returns partial summaries when some schema inputs are unavailable
+- logs a dedicated `query.support_summary` audit event with bounded metadata only
+
+Python:
+
+```python
+search_payload = {
+    "time_from": "2026-04-04T18:55:00Z",
+    "time_to": "2026-04-04T19:10:00Z",
+    "filters": {
+        "action": "Blocked",
+        "server_ip": "1.1.1.1,8.8.8.8",
+    },
+    "limit": 200,
+}
+
+summary_payload = {
+    "search": search_payload,
+    "pcap_context": {
+        "file_name": "incident.pcapng",
+        "link_type": "EN10MB",
+        "time_from": "2026-04-04T18:59:12Z",
+        "time_to": "2026-04-04T19:04:01Z",
+        "search_time_from": "2026-04-04T18:54:12Z",
+        "search_time_to": "2026-04-04T19:09:01Z",
+        "packet_count": 48122,
+        "unique_source_ip_count": 3,
+        "unique_destination_ip_count": 18,
+    },
+}
+
+response = require_ok(session.post(f"{BASE_URL}/api/summary/support", json=summary_payload))
+pretty(response.json())
+```
+
+Useful response fields:
+- `overview`
+- `issue_classification`
+- `primary_findings`
+- `top_signals`
+- `recommended_next_checks`
+- `missing_inputs`
+- `response_code_summary`
+- `policy_reason_summary`
+- `zero_response_destinations`
+- `tls_or_certificate_indicators`
+- `geo_indicators`
+- `threat_indicators`
 
 ### `POST /api/export/csv`
 

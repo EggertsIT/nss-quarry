@@ -56,6 +56,77 @@ pub struct SearchResponse {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SupportSummaryRequest {
+    pub search: SearchRequest,
+    #[serde(default)]
+    pub pcap_context: Option<SupportSummaryPcapContext>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SupportSummaryPcapContext {
+    pub file_name: Option<String>,
+    pub link_type: Option<String>,
+    pub time_from: Option<DateTime<Utc>>,
+    pub time_to: Option<DateTime<Utc>>,
+    pub search_time_from: Option<DateTime<Utc>>,
+    pub search_time_to: Option<DateTime<Utc>>,
+    pub packet_count: Option<u64>,
+    pub unique_source_ip_count: Option<usize>,
+    pub unique_destination_ip_count: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SupportClassification {
+    PolicyBlock,
+    SslTlsIssue,
+    GeoIssue,
+    ThreatOrReputation,
+    ConnectivityOrProbeFailure,
+    CloudAppOrFileControl,
+    InsufficientEvidence,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SupportSummaryItem {
+    pub value: String,
+    pub count: usize,
+    pub hint: Option<String>,
+    pub severity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SupportFinding {
+    pub title: String,
+    pub severity: String,
+    pub summary: String,
+    pub count: usize,
+    pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SupportSummaryResponse {
+    pub generated_at: DateTime<Utc>,
+    pub time_from: DateTime<Utc>,
+    pub time_to: DateTime<Utc>,
+    pub row_count: usize,
+    pub truncated: bool,
+    pub pcap_assisted: bool,
+    pub overview: String,
+    pub issue_classification: Vec<SupportClassification>,
+    pub primary_findings: Vec<SupportFinding>,
+    pub top_signals: Vec<SupportSummaryItem>,
+    pub recommended_next_checks: Vec<String>,
+    pub missing_inputs: Vec<String>,
+    pub response_code_summary: Vec<SupportSummaryItem>,
+    pub policy_reason_summary: Vec<SupportSummaryItem>,
+    pub zero_response_destinations: Vec<SupportSummaryItem>,
+    pub tls_or_certificate_indicators: Vec<SupportSummaryItem>,
+    pub geo_indicators: Vec<SupportSummaryItem>,
+    pub threat_indicators: Vec<SupportSummaryItem>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct PcapAnalyzeResponse {
     pub file_name: Option<String>,

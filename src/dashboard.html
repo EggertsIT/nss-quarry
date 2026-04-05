@@ -458,10 +458,130 @@
       font-size: 0.79rem;
       line-height: 1.3;
     }
+    .support-summary-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .support-summary-meta {
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.45;
+    }
+    .support-summary-overview {
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(188, 209, 232, 0.92);
+      background: linear-gradient(180deg, rgba(253, 254, 255, 0.98), rgba(245, 249, 255, 0.95));
+      color: var(--ink-strong);
+      line-height: 1.55;
+    }
+    .support-summary-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .support-summary-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      border: 1px solid rgba(181, 205, 233, 0.92);
+      background: linear-gradient(180deg, rgba(250, 253, 255, 0.98), rgba(239, 246, 255, 0.94));
+      color: var(--navy);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+    .support-summary-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .support-summary-card {
+      border: 1px solid rgba(188, 209, 232, 0.92);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(253, 254, 255, 0.96), rgba(245, 249, 255, 0.94));
+      padding: 14px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+    .support-summary-card h4 {
+      margin: 0 0 10px 0;
+      font-size: 0.9rem;
+    }
+    .support-summary-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .support-summary-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .support-summary-row strong {
+      font-variant-numeric: tabular-nums;
+      color: var(--navy);
+    }
+    .support-summary-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .support-summary-finding {
+      padding: 12px;
+      border-radius: 14px;
+      border: 1px solid rgba(193, 214, 237, 0.88);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(242, 248, 255, 0.92));
+    }
+    .support-summary-finding-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .support-summary-finding-title {
+      font-weight: 700;
+      color: var(--ink-strong);
+    }
+    .support-summary-finding-body {
+      color: var(--ink);
+      line-height: 1.45;
+      font-size: 0.88rem;
+    }
+    .support-summary-finding-examples {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.35;
+    }
+    .support-summary-checks {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .support-summary-check {
+      display: flex;
+      gap: 8px;
+      line-height: 1.45;
+      color: var(--ink);
+      font-size: 0.88rem;
+    }
+    .support-summary-check::before {
+      content: "•";
+      color: var(--accent-strong);
+      font-weight: 800;
+    }
     .badge-critical { color: #b91c1c; font-weight: 700; }
     .badge-high { color: #b45309; font-weight: 700; }
     .badge-medium { color: #1d4ed8; font-weight: 700; }
     .badge-low { color: #374151; font-weight: 700; }
+    .badge-info { color: #334155; font-weight: 700; }
     .results-table {
       table-layout: auto;
       min-width: 100%;
@@ -1006,6 +1126,12 @@
         <div id="search-msg" class="message"></div>
       </div>
 
+      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+        <h3>Support Summary</h3>
+        <div id="support-summary-msg" class="message"></div>
+        <div id="support-summary" class="support-summary-shell muted">Run a search or analyze a PCAP/PCAPNG file to generate a support summary.</div>
+      </div>
+
       <div class="panel map-panel" style="margin-top: 14px;">
         <h3>Search Country Flow Map</h3>
         <div class="network-map-wrap">
@@ -1161,6 +1287,7 @@
     const AUTH_MODE = "__AUTH_MODE__";
     let currentUser = null;
     let latestSearchRequest = null;
+    let latestPcapContext = null;
     let latestSchema = null;
     let activeView = "main";
     let ingestorLoaded = false;
@@ -2444,10 +2571,12 @@
       const req = buildSearchRequestFromForm();
       if (!req.time_from || !req.time_to) {
         setMessage("search-msg", "Please provide valid from/to timestamps.");
+        resetSupportSummary("Provide a valid search window to generate a support summary.");
         return;
       }
       const result = await apiFetch("/api/search", { method: "POST", body: req });
       await renderSearchResult(result);
+      await runSupportSummary(req);
     }
 
     function mappedFieldName(key, fallback) {
@@ -2605,6 +2734,165 @@
         .replaceAll(">", "&gt;")
         .replaceAll("\"", "&quot;")
         .replaceAll("'", "&#39;");
+    }
+
+    function supportClassificationLabel(value) {
+      const raw = String(value || "").replaceAll("_", " ").trim();
+      return raw.length > 0 ? raw : "unknown";
+    }
+
+    function supportClassificationSeverity(value) {
+      switch (String(value || "")) {
+        case "threat_or_reputation":
+          return "critical";
+        case "ssl_tls_issue":
+        case "geo_issue":
+        case "connectivity_or_probe_failure":
+          return "high";
+        case "policy_block":
+        case "cloud_app_or_file_control":
+          return "medium";
+        default:
+          return "info";
+      }
+    }
+
+    function buildSupportSummaryRequest(searchReq) {
+      return {
+        search: searchReq,
+        pcap_context: latestPcapContext ? { ...latestPcapContext } : null,
+      };
+    }
+
+    function resetSupportSummary(message = "Run a search or analyze a PCAP/PCAPNG file to generate a support summary.") {
+      setMessage("support-summary-msg", "");
+      const host = $("support-summary");
+      host.classList.add("muted");
+      host.textContent = message;
+    }
+
+    function renderSummaryItemList(title, items) {
+      if (!Array.isArray(items) || items.length === 0) return "";
+      return `
+        <div class="support-summary-card">
+          <h4>${escapeHtml(title)}</h4>
+          <div class="support-summary-list">
+            ${items.map((item) => {
+              const safeValue = escapeHtml(item.value || "Unknown");
+              const safeHint = item.hint ? `<div class="insight-hint"><span class="badge-${escapeHtml(item.severity || "info")}">${escapeHtml(String(item.severity || "info").toUpperCase())}</span> • ${escapeHtml(item.hint)}</div>` : "";
+              return `
+                <div>
+                  <div class="support-summary-row">
+                    <span class="support-summary-label" title="${safeValue}">${safeValue}</span>
+                    <strong>${Number(item.count || 0).toLocaleString()}</strong>
+                  </div>
+                  ${safeHint}
+                </div>
+              `;
+            }).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSupportSummary(summary) {
+      const host = $("support-summary");
+      host.classList.remove("muted");
+
+      const classifications = Array.isArray(summary.issue_classification)
+        ? summary.issue_classification
+        : [];
+      const badges = classifications.length > 0
+        ? classifications.map((value) => {
+            const severity = supportClassificationSeverity(value);
+            return `<span class="support-summary-badge"><span class="badge-${severity}">${escapeHtml(supportClassificationLabel(value))}</span></span>`;
+          }).join("")
+        : `<span class="support-summary-badge"><span class="badge-info">insufficient evidence</span></span>`;
+
+      const findingsHtml = Array.isArray(summary.primary_findings) && summary.primary_findings.length > 0
+        ? summary.primary_findings.map((finding) => {
+            const examples = Array.isArray(finding.examples) && finding.examples.length > 0
+              ? `<div class="support-summary-finding-examples">Examples: ${finding.examples.map((v) => escapeHtml(v)).join(", ")}</div>`
+              : "";
+            return `
+              <div class="support-summary-finding">
+                <div class="support-summary-finding-top">
+                  <div class="support-summary-finding-title">${escapeHtml(finding.title || "Finding")}</div>
+                  <span class="badge-${escapeHtml(finding.severity || "info")}">${escapeHtml(String(finding.severity || "info").toUpperCase())}</span>
+                </div>
+                <div class="support-summary-finding-body">${escapeHtml(finding.summary || "")}</div>
+                ${examples}
+              </div>
+            `;
+          }).join("")
+        : `<div class="muted">No summary findings generated for the current search.</div>`;
+
+      const checksHtml = Array.isArray(summary.recommended_next_checks) && summary.recommended_next_checks.length > 0
+        ? summary.recommended_next_checks.map((item) => `<div class="support-summary-check">${escapeHtml(item)}</div>`).join("")
+        : `<div class="muted">No specific next checks were generated.</div>`;
+
+      const missingInputsHtml = Array.isArray(summary.missing_inputs) && summary.missing_inputs.length > 0
+        ? `<div class="support-summary-card"><h4>Missing Inputs</h4><div class="support-summary-list">${summary.missing_inputs.map((item) => `<div class="support-summary-row"><span class="support-summary-label">${escapeHtml(item)}</span></div>`).join("")}</div></div>`
+        : "";
+
+      host.innerHTML = `
+        <div class="support-summary-overview">${escapeHtml(summary.overview || "No overview available.")}</div>
+        <div class="support-summary-badges">${badges}</div>
+        <div class="support-summary-meta">
+          Rows: ${Number(summary.row_count || 0).toLocaleString()} |
+          Truncated: ${summary.truncated ? "yes" : "no"} |
+          PCAP-assisted: ${summary.pcap_assisted ? "yes" : "no"} |
+          Window: ${escapeHtml(formatDashboardTimestamp(summary.time_from))} -> ${escapeHtml(formatDashboardTimestamp(summary.time_to))}
+        </div>
+        <div class="support-summary-grid">
+          <div class="support-summary-card">
+            <h4>Primary Findings</h4>
+            <div class="support-summary-list">${findingsHtml}</div>
+          </div>
+          <div class="support-summary-card">
+            <h4>Top Signals</h4>
+            <div class="support-summary-list">
+              ${(Array.isArray(summary.top_signals) && summary.top_signals.length > 0)
+                ? summary.top_signals.map((item) => `
+                  <div>
+                    <div class="support-summary-row">
+                      <span class="support-summary-label" title="${escapeHtml(item.value || "Unknown")}">${escapeHtml(item.value || "Unknown")}</span>
+                      <strong>${Number(item.count || 0).toLocaleString()}</strong>
+                    </div>
+                    ${item.hint ? `<div class="insight-hint">${escapeHtml(item.hint)}</div>` : ""}
+                  </div>
+                `).join("")
+                : `<div class="muted">No strong signals found.</div>`}
+            </div>
+          </div>
+          <div class="support-summary-card">
+            <h4>Recommended Next Checks</h4>
+            <div class="support-summary-checks">${checksHtml}</div>
+          </div>
+          ${renderSummaryItemList("Policy Reasons", summary.policy_reason_summary || [])}
+          ${renderSummaryItemList("Response Codes", summary.response_code_summary || [])}
+          ${renderSummaryItemList("Zero-Response Destinations", summary.zero_response_destinations || [])}
+          ${renderSummaryItemList("TLS / Certificate Indicators", summary.tls_or_certificate_indicators || [])}
+          ${renderSummaryItemList("Geo Indicators", summary.geo_indicators || [])}
+          ${renderSummaryItemList("Threat Indicators", summary.threat_indicators || [])}
+          ${missingInputsHtml}
+        </div>
+      `;
+    }
+
+    async function runSupportSummary(searchReq) {
+      setMessage("support-summary-msg", "Generating support summary...");
+      try {
+        const summary = await apiFetch("/api/summary/support", {
+          method: "POST",
+          body: buildSupportSummaryRequest(searchReq),
+        });
+        renderSupportSummary(summary);
+        setMessage("support-summary-msg", "");
+      } catch (err) {
+        resetSupportSummary("Support summary is unavailable for the current search.");
+        setMessage("support-summary-msg", err.message || "Failed to generate support summary.");
+      }
     }
 
     function renderSearchInsights(rows) {
@@ -2801,6 +3089,17 @@
         payload.truncated_ips ? "sip_list_truncated=yes" : "sip_list_truncated=no",
       ].join(" | ");
       $("pcap-summary").textContent = summary;
+      latestPcapContext = {
+        file_name: payload.file_name || file.name || null,
+        link_type: payload.link_type || null,
+        time_from: payload.time_from || null,
+        time_to: payload.time_to || null,
+        search_time_from: payload.search_time_from || payload.time_from || null,
+        search_time_to: payload.search_time_to || payload.time_to || null,
+        packet_count: payload.packet_count || null,
+        unique_source_ip_count: payload.unique_source_ip_count || null,
+        unique_destination_ip_count: payload.unique_destination_ip_count || null,
+      };
       setMessage("pcap-msg", "PCAP analyzed and filters applied.", true);
       await runSearch();
     }
@@ -3087,6 +3386,7 @@
       $("auth-mode-chip").textContent = `Configured authentication: ${modeLabel(AUTH_MODE)}`;
       toggleAuthUi();
       populatePolicyReasonOptions();
+      resetSupportSummary();
       bindMapControlButtons();
 
       const now = new Date();

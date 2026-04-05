@@ -4,8 +4,10 @@ mod config;
 mod models;
 mod pcap;
 mod query;
+mod summary;
 mod webui;
 
+use std::collections::BTreeSet;
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,9 +37,11 @@ use crate::models::{
     ApiTokenUpdateRequest, AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
     IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
     PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
+    SupportSummaryRequest, SupportSummaryResponse,
 };
 use crate::pcap::analyze_pcap_file;
 use crate::query::{DashboardRefreshMode, QueryService, VisibilityFilters};
+use crate::summary::build_support_summary;
 use crate::webui::render_dashboard_html;
 
 #[cfg(unix)]
@@ -219,6 +223,7 @@ fn build_router(state: AppState) -> Router {
             post(api_admin_ingestor_force_finalize_open_files),
         )
         .route("/api/search", post(api_search))
+        .route("/api/summary/support", post(api_support_summary))
         .route("/api/export/csv", post(api_export_csv))
         .route(
             "/api/pcap/analyze",
@@ -560,6 +565,61 @@ async fn api_search(
     Ok(Json(result))
 }
 
+async fn api_support_summary(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<SupportSummaryRequest>,
+) -> Result<Json<SupportSummaryResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let summary_search = build_support_summary_search_request(&state, &req.search).await?;
+    let search_result = state
+        .query
+        .search(summary_search.clone(), user.role)
+        .await
+        .map_err(AppError::bad_request)?;
+    let summary = build_support_summary(
+        &req.search,
+        &search_result,
+        req.pcap_context.as_ref(),
+        &state.cfg.data.fields,
+    );
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.support_summary".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "query": req.search,
+                "pcap_assisted": req.pcap_context.is_some(),
+                "pcap_context": audit_pcap_context(req.pcap_context.as_ref()),
+                "summary_search_columns": summary_search.columns.clone(),
+                "rows": summary.row_count,
+                "truncated": summary.truncated,
+                "classifications": serde_json::to_value(summary.issue_classification.clone()).unwrap_or_else(|_| serde_json::json!([])),
+                "missing_inputs": summary.missing_inputs.clone(),
+            }),
+        })
+        .await;
+
+    Ok(Json(summary))
+}
+
 async fn api_export_csv(
     State(state): State<AppState>,
     jar: CookieJar,
@@ -743,6 +803,94 @@ async fn api_pcap_analyze(
         .await;
 
     Ok(Json(response))
+}
+
+async fn build_support_summary_search_request(
+    state: &AppState,
+    search: &SearchRequest,
+) -> Result<SearchRequest, AppError> {
+    let parquet_root = state.cfg.data.parquet_root.clone();
+    let (parquet_columns, _) =
+        tokio::task::spawn_blocking(move || detect_parquet_columns(&parquet_root))
+            .await
+            .map_err(AppError::internal)?;
+    let available = parquet_columns
+        .into_iter()
+        .map(|column| (column.name.to_ascii_lowercase(), column.name))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut seen = BTreeSet::new();
+    let mut columns = Vec::new();
+    for candidate in support_summary_candidate_columns(&state.cfg.data.fields) {
+        let key = candidate.to_ascii_lowercase();
+        if let Some(actual) = available.get(&key)
+            && seen.insert(actual.clone())
+        {
+            columns.push(actual.clone());
+        }
+    }
+
+    if columns.is_empty() {
+        columns = search
+            .columns
+            .clone()
+            .unwrap_or_else(|| state.cfg.query.default_columns.clone());
+    }
+
+    let mut req = search.clone();
+    req.columns = Some(columns);
+    Ok(req)
+}
+
+fn support_summary_candidate_columns(fields: &crate::config::FieldMap) -> Vec<String> {
+    let mut columns = vec![
+        fields.time_field.clone(),
+        fields.action_field.clone(),
+        fields.response_code_field.clone(),
+        fields.reason_field.clone(),
+        fields.threat_field.clone(),
+        fields.category_field.clone(),
+        fields.source_ip_field.clone(),
+        fields.server_ip_field.clone(),
+        fields.url_field.clone(),
+        fields.user_field.clone(),
+        fields.device_field.clone(),
+        fields.department_field.clone(),
+        "respsize".to_string(),
+        "host".to_string(),
+        "rulelabel".to_string(),
+        "ruletype".to_string(),
+        "malwarecat".to_string(),
+        "appname".to_string(),
+        "urlclass".to_string(),
+        "urlsupercat".to_string(),
+    ];
+    if let Some(source_country) = fields.source_country_field.as_ref() {
+        columns.push(source_country.clone());
+    }
+    if let Some(destination_country) = fields.destination_country_field.as_ref() {
+        columns.push(destination_country.clone());
+    }
+    columns
+}
+
+fn audit_pcap_context(
+    context: Option<&crate::models::SupportSummaryPcapContext>,
+) -> serde_json::Value {
+    let Some(context) = context else {
+        return serde_json::Value::Null;
+    };
+    serde_json::json!({
+        "file_name": context.file_name,
+        "link_type": context.link_type,
+        "time_from": context.time_from,
+        "time_to": context.time_to,
+        "search_time_from": context.search_time_from,
+        "search_time_to": context.search_time_to,
+        "packet_count": context.packet_count,
+        "unique_source_ip_count": context.unique_source_ip_count,
+        "unique_destination_ip_count": context.unique_destination_ip_count,
+    })
 }
 
 async fn api_dashboard(
