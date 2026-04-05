@@ -1189,7 +1189,12 @@
       </div>
 
       <div class="panel panel-full-bleed" style="margin-top: 14px;">
-        <h3>Support Summary</h3>
+        <div class="section-header">
+          <h3>Support Summary</h3>
+          <div>
+            <button id="refresh-support-summary" type="button" class="ghost">Generate Summary</button>
+          </div>
+        </div>
         <div id="support-summary-msg" class="message"></div>
         <div id="support-summary" class="support-summary-shell muted">Run a search or analyze a PCAP/PCAPNG file to generate a support summary.</div>
       </div>
@@ -2675,12 +2680,6 @@
       } catch (err) {
         console.warn("search sankey render failed", err);
       }
-      if (renderToken !== latestSearchRenderToken) return;
-      try {
-        await runSupportSummary(req);
-      } catch (err) {
-        console.warn("support summary refresh failed", err);
-      }
     }
 
     function mappedFieldName(key, fallback) {
@@ -3367,6 +3366,9 @@
         tableClass: "results-table",
         stickyColumns: ["time", "action"],
       }));
+      if (renderToken === latestSearchRenderToken) {
+        resetSupportSummary("Search results are ready. Generate a support summary on demand for the current search.");
+      }
     }
 
     async function exportCsv() {
@@ -3894,6 +3896,17 @@
           await analyzePcapAndApply();
         } catch (err) {
           setMessage("pcap-msg", err.message || "PCAP analysis failed.");
+        }
+      });
+      $("refresh-support-summary").addEventListener("click", async () => {
+        if (!latestSearchRequest || !latestSearchRequest.time_from || !latestSearchRequest.time_to) {
+          setMessage("support-summary-msg", "Run a search first.");
+          return;
+        }
+        try {
+          await runSupportSummary(latestSearchRequest);
+        } catch (err) {
+          setMessage("support-summary-msg", err.message || "Failed to generate support summary.");
         }
       });
       $("search-form").addEventListener("submit", async (e) => {
