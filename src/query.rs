@@ -851,153 +851,141 @@ impl QueryService {
             .as_deref()
             .map(ident);
 
+        let Some(parquet_src) = parquet_source_sql_for_range(&self.inner.parquet_root, from, to)?
+        else {
+            return Ok(Vec::new());
+        };
+
         let conn = open_query_connection()?;
-        let mut out = Vec::new();
-        for (hour, files) in
-            parquet_file_groups_with_hours_for_range(&self.inner.parquet_root, from, to)?
+        let from_ts = from.format("%Y-%m-%d %H:%M:%S").to_string();
+        let to_ts = to.format("%Y-%m-%d %H:%M:%S").to_string();
+        let mut buckets = empty_analytics_buckets(from, to);
+        populate_hourly_scalar_counts(
+            &conn,
+            &mut buckets,
+            HourlyScalarArgs {
+                parquet_src: parquet_src.as_str(),
+                time_col: &time_col,
+                action_col: &action_col,
+                threat_col: &threat_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+            },
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &user_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_users,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &category_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_categories,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &device_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_devices,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &source_ip_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_source_ips,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &destination_ip_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_destination_ips,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &dept_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_departments,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &resp_code_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_response_codes,
+        )?;
+        populate_hourly_group_counts(
+            &conn,
+            &mut buckets,
+            HourlyGroupCountArgs {
+                field_col: &reason_col,
+                time_col: &time_col,
+                from_ts: &from_ts,
+                to_ts: &to_ts,
+                parquet_src: parquet_src.as_str(),
+            },
+            |aggregate| &mut aggregate.top_policy_reasons,
+        )?;
+        if let (Some(src_col), Some(dst_col)) =
+            (src_country_col.as_deref(), dst_country_col.as_deref())
         {
-            let parquet_src = parquet_source_sql_from_files(&files);
-            let bucket_from = hour.max(from);
-            let bucket_to = (hour + chrono::Duration::hours(1)).min(to);
-            let from_ts = bucket_from.format("%Y-%m-%d %H:%M:%S").to_string();
-            let to_ts = bucket_to.format("%Y-%m-%d %H:%M:%S").to_string();
-            let mut buckets = BTreeMap::new();
-            buckets.insert(
-                hour,
-                AnalyticsBucket {
-                    hour,
-                    aggregate: DashboardAggregate::default(),
-                },
-            );
-            populate_hourly_scalar_counts(
+            populate_hourly_country_flow_counts(
                 &conn,
                 &mut buckets,
-                HourlyScalarArgs {
-                    parquet_src: parquet_src.as_str(),
-                    time_col: &time_col,
-                    action_col: &action_col,
-                    threat_col: &threat_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                },
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &user_col,
+                HourlyCountryFlowCountArgs {
+                    src_country_col: src_col,
+                    dst_country_col: dst_col,
                     time_col: &time_col,
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
                 },
-                |aggregate| &mut aggregate.top_users,
             )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &category_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_categories,
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &device_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_devices,
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &source_ip_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_source_ips,
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &destination_ip_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_destination_ips,
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &dept_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_departments,
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &resp_code_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_response_codes,
-            )?;
-            populate_hourly_group_counts(
-                &conn,
-                &mut buckets,
-                HourlyGroupCountArgs {
-                    field_col: &reason_col,
-                    time_col: &time_col,
-                    from_ts: &from_ts,
-                    to_ts: &to_ts,
-                    parquet_src: parquet_src.as_str(),
-                },
-                |aggregate| &mut aggregate.top_policy_reasons,
-            )?;
-            if let (Some(src_col), Some(dst_col)) =
-                (src_country_col.as_deref(), dst_country_col.as_deref())
-            {
-                populate_hourly_country_flow_counts(
-                    &conn,
-                    &mut buckets,
-                    HourlyCountryFlowCountArgs {
-                        src_country_col: src_col,
-                        dst_country_col: dst_col,
-                        time_col: &time_col,
-                        from_ts: &from_ts,
-                        to_ts: &to_ts,
-                        parquet_src: parquet_src.as_str(),
-                    },
-                )?;
-            }
-            if let Some(bucket) = buckets.remove(&hour) {
-                out.push(bucket);
-            }
         }
 
+        let mut out = buckets.into_values().collect::<Vec<_>>();
         for bucket in &mut out {
             bucket.aggregate.trim_top_n(self.inner.analytics_top_n);
         }
@@ -1412,6 +1400,25 @@ fn populate_hourly_country_flow_counts(
             .insert(format!("{src}\u{001f}{dst}"), count);
     }
     Ok(())
+}
+
+fn empty_analytics_buckets(
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> BTreeMap<DateTime<Utc>, AnalyticsBucket> {
+    let mut buckets = BTreeMap::new();
+    let mut cursor = floor_to_hour(from);
+    while cursor < to {
+        buckets.insert(
+            cursor,
+            AnalyticsBucket {
+                hour: cursor,
+                aggregate: DashboardAggregate::default(),
+            },
+        );
+        cursor += chrono::Duration::hours(1);
+    }
+    buckets
 }
 
 fn merge_analytics_buckets(
@@ -2094,7 +2101,6 @@ fn open_query_connection() -> Result<Connection> {
     conn.execute_batch(&format!(
         "SET memory_limit = '{memory_limit}'; \
          SET threads = {threads}; \
-         SET preserve_insertion_order = false; \
          SET temp_directory = '{temp_dir}';",
         memory_limit = DUCKDB_MEMORY_LIMIT,
         threads = DUCKDB_THREADS,
@@ -2383,6 +2389,18 @@ fn validate_filter_value(value: Option<&str>, re: &Regex, allow_csv: bool) -> Re
     Ok(())
 }
 
+fn parquet_source_sql_for_range(
+    root: &Path,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Option<String>> {
+    let files = parquet_files_for_range(root, from, to)?;
+    if files.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parquet_source_sql_from_files(&files)))
+}
+
 fn parquet_source_sql_from_files(files: &[PathBuf]) -> String {
     let list = files
         .iter()
@@ -2431,46 +2449,6 @@ fn parquet_file_groups_for_range(
     Ok(groups)
 }
 
-fn parquet_file_groups_with_hours_for_range(
-    root: &Path,
-    from: DateTime<Utc>,
-    to: DateTime<Utc>,
-) -> Result<Vec<(DateTime<Utc>, Vec<PathBuf>)>> {
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-    let mut groups = Vec::new();
-    let mut cursor = floor_to_hour(from);
-    let end = floor_to_hour(to);
-    while cursor <= end {
-        let part_dir = root.join(format!(
-            "dt={}/hour={:02}",
-            cursor.format("%Y-%m-%d"),
-            cursor.hour()
-        ));
-        let mut files = Vec::new();
-        if part_dir.is_dir() {
-            for entry in std::fs::read_dir(&part_dir)? {
-                let entry = entry?;
-                let file_type = entry.file_type()?;
-                if file_type.is_file()
-                    && let Some(ext) = entry.path().extension().and_then(|e| e.to_str())
-                    && ext.eq_ignore_ascii_case("parquet")
-                {
-                    files.push(entry.path());
-                }
-            }
-        }
-        files.sort();
-        if !files.is_empty() {
-            groups.push((cursor, files));
-        }
-        cursor += chrono::Duration::hours(1);
-    }
-    Ok(groups)
-}
-
-#[cfg(test)]
 fn parquet_files_for_range(
     root: &Path,
     from: DateTime<Utc>,
