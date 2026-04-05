@@ -1298,6 +1298,7 @@
     let currentUser = null;
     let latestSearchRequest = null;
     let latestPcapContext = null;
+    let latestSearchRenderToken = 0;
     let latestSchema = null;
     let activeView = "main";
     let ingestorLoaded = false;
@@ -2564,13 +2565,6 @@
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
         req.columns = rawCols.split(",").map(v => v.trim()).filter(v => v.length > 0);
-      } else if (latestSchema && Array.isArray(latestSchema.parquet_columns)) {
-        const cols = latestSchema.parquet_columns
-          .map(c => c && c.name ? String(c.name).trim() : "")
-          .filter(c => c.length > 0);
-        if (cols.length > 0) {
-          req.columns = cols;
-        }
       }
       latestSearchRequest = req;
       return req;
@@ -2584,9 +2578,40 @@
         resetSupportSummary("Provide a valid search window to generate a support summary.");
         return;
       }
+      const renderToken = ++latestSearchRenderToken;
+      const startedAt = performance.now();
       const result = await apiFetch("/api/search", { method: "POST", body: req });
-      await renderSearchResult(result);
-      await runSupportSummary(req);
+      const fetchMs = performance.now() - startedAt;
+      const renderStartedAt = performance.now();
+      renderSearchResult(result, renderToken, { fetchMs });
+      const renderMs = performance.now() - renderStartedAt;
+      setMessageTone(
+        "search-msg",
+        `Search API ${fetchMs.toFixed(0)} ms | table render ${renderMs.toFixed(0)} ms | background visuals continue asynchronously.`,
+        "info"
+      );
+      void refreshSearchEnhancements(req, result, renderToken);
+    }
+
+    async function refreshSearchEnhancements(req, result, renderToken) {
+      await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+      if (renderToken !== latestSearchRenderToken) return;
+      const rows = Array.isArray(result?.rows) ? result.rows : [];
+      renderSearchInsights(rows);
+      if (renderToken !== latestSearchRenderToken) return;
+      try {
+        await renderSearchFlowMap(rows);
+      } catch (err) {
+        console.warn("search flow map render failed", err);
+      }
+      if (renderToken !== latestSearchRenderToken) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      if (renderToken !== latestSearchRenderToken) return;
+      try {
+        renderSearchSankey(rows);
+      } catch (err) {
+        console.warn("search sankey render failed", err);
+      }
     }
 
     function mappedFieldName(key, fallback) {
@@ -2996,15 +3021,26 @@
       }
     }
 
-    async function renderSearchResult(result) {
+    function renderSearchResult(result, renderToken, metrics = null) {
       const rows = result.rows || [];
-      $("result-meta").textContent = `Rows: ${result.row_count} | Truncated: ${result.truncated ? "yes" : "no"}`;
+      const parts = [
+        `Rows: ${result.row_count}`,
+        `Truncated: ${result.truncated ? "yes" : "no"}`,
+      ];
+      if (metrics && Number.isFinite(metrics.fetchMs)) {
+        parts.push(`Search API: ${metrics.fetchMs.toFixed(0)} ms`);
+      }
+      $("result-meta").textContent = parts.join(" | ");
       const host = $("results");
       host.innerHTML = "";
       if (rows.length === 0) {
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
-        renderSearchInsights([]);
-        await renderSearchFlowMap([]);
+        if (renderToken === latestSearchRenderToken) {
+          renderSearchInsights([]);
+          void renderSearchFlowMap([]);
+          renderSearchSankey([]);
+          resetSupportSummary("No rows returned for the current search.");
+        }
         return;
       }
       const columns = Object.keys(rows[0]);
@@ -3013,8 +3049,9 @@
         tableClass: "results-table",
         stickyColumns: ["time", "action"],
       }));
-      renderSearchInsights(rows);
-      await renderSearchFlowMap(rows);
+      if (renderToken === latestSearchRenderToken) {
+        resetSupportSummary("Search results are ready. Generate a support summary on demand for the current search.");
+      }
     }
 
     async function exportCsv() {
