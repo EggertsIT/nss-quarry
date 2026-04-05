@@ -1,6 +1,6 @@
-# Experimental: ServiceNow Workflow Integration
+# ServiceNow Workflow Integration
 
-This document describes an experimental way to integrate `nss-quarry` into a ServiceNow-based support workflow.
+This document describes the production integration pattern for connecting `nss-quarry` to a ServiceNow-based support workflow.
 
 Goal:
 - a user opens an incident or request in ServiceNow
@@ -11,7 +11,13 @@ Goal:
 - ServiceNow runs the correlated log search
 - the case is updated with a support-friendly summary and optional CSV evidence
 
-This is possible today with the current `nss-quarry` API. It is a good enterprise idea if it is implemented as a controlled backend workflow, not as a direct browser-to-internal-tool shortcut.
+This is implemented in the current `nss-quarry` API. It should be run as a controlled backend workflow, not as a direct browser-to-internal-tool shortcut.
+
+ServiceNow-specific API endpoints:
+- `POST /api/integrations/servicenow/investigations`
+- `GET /api/integrations/servicenow/jobs/{job_id}`
+- `GET /api/integrations/servicenow/jobs/{job_id}/result`
+- `GET /api/integrations/servicenow/jobs/{job_id}/export.csv?token=...`
 
 ## Recommendation
 
@@ -195,7 +201,11 @@ Optional:
 
 ## Step 7: Build a case summary
 
-`nss-quarry` does not currently return a single dedicated “case summary” object. That is fine for an experimental integration, because ServiceNow can build the summary from existing API responses.
+`nss-quarry` now provides a dedicated asynchronous ServiceNow investigation flow. ServiceNow should primarily consume:
+- `/api/integrations/servicenow/investigations`
+- `/api/integrations/servicenow/jobs/{job_id}`
+- `/api/integrations/servicenow/jobs/{job_id}/result`
+- optional `/api/integrations/servicenow/jobs/{job_id}/export.csv?token=...`
 
 Suggested summary fields:
 - capture start / end time
@@ -290,33 +300,24 @@ This is the first real constraint.
 
 ### 3. Summary generation
 
-There is no dedicated `case summary` endpoint yet. For now, ServiceNow should construct the summary from:
-- `/api/pcap/analyze`
-- `/api/search`
-- optionally `/api/export/csv`
+Use the ServiceNow integration endpoints as the primary path. The legacy direct composition path (`/api/pcap/analyze` + `/api/search`) should only be used for custom workflows.
 
 ## Recommended Next-Step Product Enhancements
 
-If this experimental workflow becomes important, the next features worth adding to `nss-quarry` are:
+If this workflow grows in usage, the next features worth adding are:
 
-1. A dedicated summary endpoint
-- for example `/api/pcap/assist-summary`
-- input: PCAP upload or prior PCAP-analysis result
-- output: structured support summary, top findings, and issue classification
+1. ServiceNow incident field templates by table
+- pre-mapped payload schemas for Incident, Case, and Security Incident
 
 2. Case correlation metadata
 - optional custom field in audit metadata such as `case_id` or `ticket_number`
 
-3. Prebuilt ServiceNow payload mode
-- response shaped specifically for case comments, work notes, and attachments
+3. Batch-mode processing
+- queue multiple incidents and process in bounded worker pools
 
 ## Verdict
 
-Yes, this is possible today.
-
-Yes, it can be a good enterprise idea.
-
-But only if you implement it as:
+This is production-feasible and enterprise-aligned when implemented as:
 - private backend integration
 - least-privilege API token
 - bounded PCAP-driven searches

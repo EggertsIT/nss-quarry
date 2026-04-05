@@ -1,6 +1,7 @@
 mod audit;
 mod auth;
 mod config;
+mod integration;
 mod models;
 mod pcap;
 mod query;
@@ -32,12 +33,15 @@ use tracing::{error, info};
 use crate::audit::AuditLogger;
 use crate::auth::{ApiTokenAuthError, AuthManager, has_min_role};
 use crate::config::{ApiTokenConfig, AppConfig, AuthMode, RoleName};
+use crate::integration::{ServiceNowIntegrationService, ServiceNowJobInput};
 use crate::models::{
     ApiTokenCreateRequest, ApiTokenCreateResponse, ApiTokenInfo, ApiTokenListResponse,
     ApiTokenUpdateRequest, AuditEvent, AuditListResponse, AuthResponse, HealthResponse,
     IngestorForceFinalizeOpenFilesResponse, LocalLoginRequest, ParquetColumnInfo,
     PcapAnalyzeResponse, ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest,
-    SupportSummaryRequest, SupportSummaryResponse,
+    ServiceNowInvestigationJobResponse, ServiceNowInvestigationResult,
+    ServiceNowInvestigationResultResponse, ServiceNowInvestigationSubmitRequest,
+    ServiceNowInvestigationSubmitResponse, SupportSummaryRequest, SupportSummaryResponse,
 };
 use crate::pcap::analyze_pcap_file;
 use crate::query::{DashboardRefreshMode, QueryService, VisibilityFilters};
@@ -81,6 +85,7 @@ struct AppState {
     auth: AuthManager,
     audit: AuditLogger,
     query: QueryService,
+    integration: ServiceNowIntegrationService,
     ingestor_client: reqwest::Client,
     api_tokens_path: PathBuf,
     visibility_filters_path: PathBuf,
@@ -95,6 +100,11 @@ struct OidcCallbackQuery {
 #[derive(Debug, Default, serde::Deserialize)]
 struct DashboardQueryParams {
     refresh: Option<String>,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+struct CsvExportQuery {
+    token: Option<String>,
 }
 
 #[tokio::main]
@@ -171,6 +181,13 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
     let api_tokens = load_api_tokens(&api_tokens_path, &cfg.auth.api_tokens.tokens).await?;
     auth.set_api_tokens(api_tokens.clone())?;
     let audit = AuditLogger::new(&cfg.audit).await?;
+    let integration = ServiceNowIntegrationService::new(
+        servicenow_jobs_dir_for_config(&cfg),
+        cfg.integration.job_ttl_hours,
+        cfg.integration.cleanup_interval_secs,
+    )
+    .await?;
+    integration.start_cleanup_task();
     let ingestor_client = reqwest::Client::builder()
         .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
         .build()
@@ -180,6 +197,7 @@ async fn run(config_path: std::path::PathBuf) -> Result<()> {
         auth,
         audit,
         query,
+        integration,
         ingestor_client,
         api_tokens_path,
         visibility_filters_path,
@@ -226,6 +244,22 @@ fn build_router(state: AppState) -> Router {
         .route("/api/summary/support", post(api_support_summary))
         .route("/api/export/csv", post(api_export_csv))
         .route(
+            "/api/integrations/servicenow/investigations",
+            post(api_servicenow_submit),
+        )
+        .route(
+            "/api/integrations/servicenow/jobs/{job_id}",
+            get(api_servicenow_job_status),
+        )
+        .route(
+            "/api/integrations/servicenow/jobs/{job_id}/result",
+            get(api_servicenow_job_result),
+        )
+        .route(
+            "/api/integrations/servicenow/jobs/{job_id}/export.csv",
+            get(api_servicenow_job_csv),
+        )
+        .route(
             "/api/pcap/analyze",
             post(api_pcap_analyze).layer(DefaultBodyLimit::max(pcap_upload_body_limit())),
         )
@@ -246,6 +280,14 @@ fn build_router(state: AppState) -> Router {
         .route("/api/audit", get(api_audit))
         .route("/api/audit/export/csv", get(api_audit_export_csv))
         .with_state(state)
+}
+
+fn servicenow_jobs_dir_for_config(cfg: &AppConfig) -> PathBuf {
+    cfg.audit
+        .path
+        .parent()
+        .unwrap_or_else(|| FsPath::new("/var/lib/nss-quarry"))
+        .join("servicenow_jobs")
 }
 
 async fn healthz() -> Json<HealthResponse> {
@@ -668,6 +710,390 @@ async fn api_export_csv(
         HeaderValue::from_static("attachment; filename=\"nss-quarry-export.csv\""),
     );
     Ok(res)
+}
+
+async fn api_servicenow_submit(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<ServiceNowInvestigationSubmitRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Analyst,
+    )
+    .await?;
+    require_api_token_auth(&user)?;
+
+    let submit = state
+        .integration
+        .submit_job(ServiceNowJobInput {
+            submitted_by: user.username.clone(),
+            submitted_role: user.role,
+            source_ip: source_ip.clone(),
+            case_id: req.case_id.clone(),
+            request_id: req.request_id.clone(),
+            request: req.clone(),
+        })
+        .await
+        .map_err(AppError::bad_request)?;
+
+    if !submit.deduplicated {
+        let job_id = submit.status.job_id.clone();
+        let state_for_job = state.clone();
+        tokio::spawn(async move {
+            if let Err(err) = process_servicenow_job(state_for_job.clone(), job_id.clone()).await {
+                error!(error = %err, job_id = %job_id, "servicenow integration job failed");
+                if let Some(input) = state_for_job
+                    .integration
+                    .job_input(&job_id)
+                    .await
+                    .ok()
+                    .flatten()
+                {
+                    state_for_job
+                        .audit
+                        .log(AuditEvent {
+                            at: Utc::now(),
+                            actor: Some(input.submitted_by.clone()),
+                            role: Some(input.submitted_role),
+                            action: "integration.servicenow.complete".to_string(),
+                            outcome: "failed".to_string(),
+                            metadata: serde_json::json!({
+                                "source_ip": input.source_ip,
+                                "job_id": job_id,
+                                "case_id": input.case_id,
+                                "request_id": input.request_id,
+                                "error": err.to_string(),
+                            }),
+                        })
+                        .await;
+                }
+                if let Err(mark_err) = state_for_job
+                    .integration
+                    .mark_failed(&job_id, err.to_string())
+                    .await
+                {
+                    error!(
+                        error = %mark_err,
+                        job_id = %job_id,
+                        "failed to mark servicenow job as failed"
+                    );
+                }
+            }
+        });
+    }
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "integration.servicenow.submit".to_string(),
+            outcome: if submit.deduplicated {
+                "deduplicated".to_string()
+            } else {
+                "accepted".to_string()
+            },
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "job_id": submit.status.job_id,
+                "case_id": submit.status.case_id,
+                "request_id": submit.status.request_id,
+                "status": submit.status.status,
+            }),
+        })
+        .await;
+
+    let response = ServiceNowInvestigationSubmitResponse {
+        schema_version: "servicenow_integration_v1".to_string(),
+        deduplicated: submit.deduplicated,
+        poll_url: format!("/api/integrations/servicenow/jobs/{}", submit.status.job_id),
+        result_url: format!(
+            "/api/integrations/servicenow/jobs/{}/result",
+            submit.status.job_id
+        ),
+        job: submit.status,
+    };
+
+    Ok((StatusCode::ACCEPTED, Json(response)))
+}
+
+async fn api_servicenow_job_status(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(job_id): Path<String>,
+) -> Result<Json<ServiceNowInvestigationJobResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Analyst,
+    )
+    .await?;
+    require_api_token_auth(&user)?;
+
+    let status = state
+        .integration
+        .job_status(&job_id)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::not_found("job not found"))?;
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "integration.servicenow.status.read".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "job_id": status.job_id,
+                "case_id": status.case_id,
+                "request_id": status.request_id,
+                "status": status.status,
+            }),
+        })
+        .await;
+
+    Ok(Json(ServiceNowInvestigationJobResponse {
+        schema_version: "servicenow_integration_v1".to_string(),
+        job: status,
+    }))
+}
+
+async fn api_servicenow_job_result(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(job_id): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Analyst,
+    )
+    .await?;
+    require_api_token_auth(&user)?;
+
+    let status = state
+        .integration
+        .job_status(&job_id)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::not_found("job not found"))?;
+    let result = state
+        .integration
+        .job_result(&job_id)
+        .await
+        .map_err(AppError::internal)?;
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "integration.servicenow.result.read".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "job_id": status.job_id,
+                "status": status.status,
+                "result_available": status.result_available,
+            }),
+        })
+        .await;
+
+    if !status.result_available {
+        let response = ServiceNowInvestigationResultResponse {
+            schema_version: "servicenow_integration_v1".to_string(),
+            job: status,
+            result: None,
+        };
+        return Ok((StatusCode::CONFLICT, Json(response)).into_response());
+    }
+
+    Ok(Json(ServiceNowInvestigationResultResponse {
+        schema_version: "servicenow_integration_v1".to_string(),
+        job: status,
+        result,
+    })
+    .into_response())
+}
+
+async fn api_servicenow_job_csv(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(job_id): Path<String>,
+    Query(query): Query<CsvExportQuery>,
+) -> Result<Response, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Analyst,
+    )
+    .await?;
+    require_api_token_auth(&user)?;
+    let token = query
+        .token
+        .as_deref()
+        .ok_or_else(|| AppError::bad_request("token query parameter is required"))?;
+
+    let csv = state
+        .integration
+        .csv_for_job(&job_id, token)
+        .await
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::not_found("csv export not available"))?;
+
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "integration.servicenow.csv.read".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "job_id": job_id,
+                "bytes": csv.len(),
+            }),
+        })
+        .await;
+
+    let mut res = Response::new(csv.into());
+    res.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("text/csv; charset=utf-8"),
+    );
+    res.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_static("attachment; filename=\"nss-quarry-servicenow-export.csv\""),
+    );
+    Ok(res)
+}
+
+async fn process_servicenow_job(state: AppState, job_id: String) -> Result<()> {
+    let Some(job_input) = state.integration.job_input(&job_id).await? else {
+        return Ok(());
+    };
+    state.integration.mark_running(&job_id).await?;
+    let summary_request = SupportSummaryRequest {
+        search: job_input.request.search.clone(),
+        pcap_context: job_input.request.pcap_context.clone(),
+    };
+    let summary_search = build_support_summary_search_request(&state, &summary_request.search)
+        .await
+        .map_err(|err| anyhow::anyhow!(err.message))?;
+    let search_result = state
+        .query
+        .search(summary_search.clone(), job_input.submitted_role)
+        .await?;
+    let summary = build_support_summary(
+        &summary_request.search,
+        &search_result,
+        summary_request.pcap_context.as_ref(),
+        &state.cfg.data.fields,
+    );
+
+    let mut csv_export = None;
+    let mut csv_data = None;
+    if job_input.request.include_csv {
+        let csv = state
+            .query
+            .export_csv(summary_request.search.clone(), job_input.submitted_role)
+            .await?;
+        if csv.len() <= state.cfg.integration.max_csv_export_bytes {
+            let token = generate_api_token_secret();
+            csv_export = Some(crate::models::ServiceNowCsvExportRef {
+                url: format!("/api/integrations/servicenow/jobs/{job_id}/export.csv?token={token}"),
+                token: token.clone(),
+                expires_at: Utc::now()
+                    + chrono::Duration::hours(state.cfg.integration.job_ttl_hours as i64),
+            });
+            csv_data = Some(csv);
+        }
+    }
+
+    let result = ServiceNowInvestigationResult {
+        schema_version: "servicenow_integration_v1".to_string(),
+        job_id: job_id.clone(),
+        case_id: job_input.case_id.clone(),
+        request_id: job_input.request_id.clone(),
+        generated_at: Utc::now(),
+        expires_at: Utc::now()
+            + chrono::Duration::hours(state.cfg.integration.job_ttl_hours as i64),
+        time_from: summary.time_from,
+        time_to: summary.time_to,
+        row_count: summary.row_count,
+        truncated: summary.truncated,
+        overview: summary.overview.clone(),
+        issue_classification: summary.issue_classification.clone(),
+        primary_findings: summary.primary_findings.clone(),
+        top_signals: summary.top_signals.clone(),
+        recommended_next_checks: summary.recommended_next_checks.clone(),
+        missing_inputs: summary.missing_inputs.clone(),
+        response_code_summary: summary.response_code_summary.clone(),
+        policy_reason_summary: summary.policy_reason_summary.clone(),
+        zero_response_destinations: summary.zero_response_destinations.clone(),
+        tls_or_certificate_indicators: summary.tls_or_certificate_indicators.clone(),
+        geo_indicators: summary.geo_indicators.clone(),
+        threat_indicators: summary.threat_indicators.clone(),
+        csv_export,
+    };
+
+    let csv_token = result.csv_export.as_ref().map(|v| v.token.clone());
+    state
+        .integration
+        .mark_completed(&job_id, result.clone(), csv_data, csv_token)
+        .await?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(job_input.submitted_by),
+            role: Some(job_input.submitted_role),
+            action: "integration.servicenow.complete".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "source_ip": job_input.source_ip,
+                "job_id": job_id,
+                "case_id": job_input.case_id,
+                "request_id": job_input.request_id,
+                "rows": result.row_count,
+                "truncated": result.truncated,
+                "classifications": result.issue_classification,
+            }),
+        })
+        .await;
+    Ok(())
 }
 
 const MAX_PCAP_UPLOAD_BYTES: u64 = 5_u64 * 1024 * 1024 * 1024;
@@ -2044,6 +2470,16 @@ async fn require_user(
     Ok(user)
 }
 
+fn require_api_token_auth(user: &crate::models::AuthUser) -> Result<(), AppError> {
+    if user.auth_mode == "api_token" {
+        Ok(())
+    } else {
+        Err(AppError::forbidden(
+            "servicenow integration endpoints require api token authentication",
+        ))
+    }
+}
+
 #[derive(Debug)]
 struct AppError {
     status: StatusCode,
@@ -2068,6 +2504,13 @@ impl AppError {
     fn forbidden(msg: &str) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
+            message: msg.to_string(),
+        }
+    }
+
+    fn not_found(msg: &str) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
             message: msg.to_string(),
         }
     }
@@ -2197,6 +2640,13 @@ mod security_tests {
             .set_visibility_filters(VisibilityFilters::default())
             .expect("set default visibility filters");
         let audit = AuditLogger::new(&cfg.audit).await.expect("audit logger");
+        let integration = ServiceNowIntegrationService::new(
+            servicenow_jobs_dir_for_config(&cfg),
+            cfg.integration.job_ttl_hours,
+            cfg.integration.cleanup_interval_secs,
+        )
+        .await
+        .expect("integration service");
         let ingestor_client = reqwest::Client::builder()
             .timeout(Duration::from_millis(cfg.ingestor.request_timeout_ms))
             .build()
@@ -2206,6 +2656,7 @@ mod security_tests {
             auth,
             audit,
             query,
+            integration,
             ingestor_client,
             api_tokens_path: std::env::temp_dir()
                 .join(format!("nss-quarry-api-tokens-{}.json", Uuid::new_v4())),
@@ -2539,6 +2990,65 @@ mod security_tests {
             .await
             .expect("response");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn servicenow_integration_requires_api_token_auth_mode() {
+        let app = test_app().await;
+        let cookie = login_cookie(&app, "analyst", "analyst").await;
+        let payload = r#"{
+            "case_id":"INC1001",
+            "request_id":"REQ1001",
+            "include_csv":false,
+            "search":{
+                "time_from":"2026-04-05T10:00:00Z",
+                "time_to":"2026-04-05T11:00:00Z",
+                "filters":{},
+                "limit":100
+            }
+        }"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/integrations/servicenow/investigations")
+            .header(header::COOKIE, cookie)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload))
+            .expect("request");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn servicenow_integration_accepts_analyst_api_token() {
+        let app = test_app().await;
+        let payload = r#"{
+            "case_id":"INC1002",
+            "request_id":"REQ1002",
+            "include_csv":false,
+            "search":{
+                "time_from":"2026-04-05T10:00:00Z",
+                "time_to":"2026-04-05T11:00:00Z",
+                "filters":{},
+                "limit":100
+            }
+        }"#;
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/integrations/servicenow/investigations")
+            .header(header::AUTHORIZATION, "Bearer analyst-token")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(payload))
+            .expect("request");
+        let res = app
+            .clone()
+            .oneshot(with_local_peer(req))
+            .await
+            .expect("response");
+        assert_eq!(res.status(), StatusCode::ACCEPTED);
     }
 
     #[tokio::test]

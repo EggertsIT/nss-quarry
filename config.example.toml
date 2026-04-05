@@ -8,6 +8,11 @@ parquet_root = "/var/lib/nss-ingestor/data"
 base_url = "http://127.0.0.1:9090"
 request_timeout_ms = 5000
 
+[integration]
+job_ttl_hours = 24
+cleanup_interval_secs = 600
+max_csv_export_bytes = 5000000
+
 [data.fields]
 time_field = "time"
 user_field = "login"
