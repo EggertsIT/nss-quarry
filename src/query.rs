@@ -882,7 +882,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_users,
             )?;
@@ -895,7 +894,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_categories,
             )?;
@@ -908,7 +906,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_devices,
             )?;
@@ -921,7 +918,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_source_ips,
             )?;
@@ -934,7 +930,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_destination_ips,
             )?;
@@ -947,7 +942,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_departments,
             )?;
@@ -960,7 +954,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_response_codes,
             )?;
@@ -973,7 +966,6 @@ impl QueryService {
                     from_ts: &from_ts,
                     to_ts: &to_ts,
                     parquet_src: parquet_src.as_str(),
-                    top_n: self.inner.analytics_top_n,
                 },
                 |aggregate| &mut aggregate.top_policy_reasons,
             )?;
@@ -990,7 +982,6 @@ impl QueryService {
                         from_ts: &from_ts,
                         to_ts: &to_ts,
                         parquet_src: parquet_src.as_str(),
-                        top_n: self.inner.analytics_top_n,
                     },
                 )?;
             }
@@ -1281,7 +1272,6 @@ struct HourlyGroupCountArgs<'a> {
     from_ts: &'a str,
     to_ts: &'a str,
     parquet_src: &'a str,
-    top_n: usize,
 }
 
 struct HourlyScalarArgs<'a> {
@@ -1300,7 +1290,6 @@ struct HourlyCountryFlowCountArgs<'a> {
     from_ts: &'a str,
     to_ts: &'a str,
     parquet_src: &'a str,
-    top_n: usize,
 }
 
 fn populate_hourly_scalar_counts(
@@ -1349,26 +1338,19 @@ where
     F: Fn(&mut DashboardAggregate) -> &mut BTreeMap<String, i64>,
 {
     let sql = format!(
-        "WITH grouped AS ( \
-            SELECT \
-                STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
-                COALESCE(CAST({field_col} AS VARCHAR), 'None') AS value, \
-                COUNT(*) AS cnt \
-            FROM {parquet_src} \
-            WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' \
-              AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
-            GROUP BY 1, 2 \
-         ) \
-         SELECT bucket_hour, value, cnt \
-         FROM grouped \
-         ORDER BY cnt DESC, value ASC \
-         LIMIT {top_n}",
+        "SELECT \
+            STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
+            COALESCE(CAST({field_col} AS VARCHAR), 'None') AS value, \
+            COUNT(*) AS cnt \
+         FROM {parquet_src} \
+         WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' \
+           AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
+         GROUP BY 1, 2",
         field_col = args.field_col,
         parquet_src = args.parquet_src,
         time_col = args.time_col,
         from_ts = args.from_ts,
         to_ts = args.to_ts,
-        top_n = args.top_n,
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([])?;
@@ -1392,30 +1374,23 @@ fn populate_hourly_country_flow_counts(
     args: HourlyCountryFlowCountArgs<'_>,
 ) -> Result<()> {
     let sql = format!(
-        "WITH grouped AS ( \
-            SELECT \
-                STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
-                CAST({src_country_col} AS VARCHAR) AS source_country, \
-                CAST({dst_country_col} AS VARCHAR) AS destination_country, \
-                COUNT(*) AS cnt \
-            FROM {parquet_src} \
-            WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' \
-              AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
-              AND COALESCE(CAST({src_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
-              AND COALESCE(CAST({dst_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
-            GROUP BY 1, 2, 3 \
-         ) \
-         SELECT bucket_hour, source_country, destination_country, cnt \
-         FROM grouped \
-         ORDER BY cnt DESC, source_country ASC, destination_country ASC \
-         LIMIT {top_n}",
+        "SELECT \
+            STRFTIME(DATE_TRUNC('hour', CAST({time_col} AS TIMESTAMP)), '%Y-%m-%d %H:%M:%S') AS bucket_hour, \
+            CAST({src_country_col} AS VARCHAR) AS source_country, \
+            CAST({dst_country_col} AS VARCHAR) AS destination_country, \
+            COUNT(*) AS cnt \
+         FROM {parquet_src} \
+         WHERE CAST({time_col} AS TIMESTAMP) >= TIMESTAMP '{from_ts}' \
+           AND CAST({time_col} AS TIMESTAMP) < TIMESTAMP '{to_ts}' \
+           AND COALESCE(CAST({src_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
+           AND COALESCE(CAST({dst_country_col} AS VARCHAR), '') NOT IN ('', 'None', 'N/A') \
+         GROUP BY 1, 2, 3",
         src_country_col = args.src_country_col,
         dst_country_col = args.dst_country_col,
         parquet_src = args.parquet_src,
         time_col = args.time_col,
         from_ts = args.from_ts,
         to_ts = args.to_ts,
-        top_n = args.top_n,
     );
     let mut stmt = conn.prepare(&sql)?;
     let mut rows = stmt.query([])?;
