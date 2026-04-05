@@ -550,12 +550,6 @@
       grid-template-columns: repeat(3, minmax(0, 1fr));
       align-items: stretch;
     }
-    .analytics-middle-stack {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      min-width: 0;
-    }
     .chart {
       display: flex;
       flex-direction: column;
@@ -727,29 +721,38 @@
     .analytics-map-panel .map-caption {
       margin-top: 0;
     }
-    .dashboard-state-panel {
-      padding: 16px 18px;
+    .dashboard-state-box {
+      margin-top: 12px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(179, 205, 235, 0.92);
       background:
-        radial-gradient(260px 120px at 100% -10%, rgba(31, 120, 216, 0.08), transparent 72%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.985), rgba(242, 248, 255, 0.965));
+        radial-gradient(240px 110px at 100% -10%, rgba(31, 120, 216, 0.08), transparent 72%),
+        linear-gradient(180deg, rgba(251, 253, 255, 0.985), rgba(241, 247, 255, 0.97));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.82),
+        0 14px 30px rgba(130, 158, 190, 0.12);
     }
-    .dashboard-state-panel h3 {
-      margin-bottom: 10px;
+    .dashboard-state-box-title {
+      margin: 0 0 10px 0;
+      font-size: 0.9rem;
+      letter-spacing: 0.02em;
+      color: var(--navy);
     }
-    .dashboard-state-panel .message {
+    .dashboard-state-box .message {
       margin: 0;
       min-height: 0;
       font-size: 0.92rem;
       line-height: 1.45;
     }
-    .dashboard-state-panel .dashboard-meta {
+    .dashboard-state-box .dashboard-meta {
       margin-top: 10px;
       gap: 10px;
     }
-    .dashboard-state-panel .dashboard-meta-row {
+    .dashboard-state-box .dashboard-meta-row {
       align-items: flex-start;
     }
-    .dashboard-state-panel .dashboard-meta-line {
+    .dashboard-state-box .dashboard-meta-line {
       font-size: 0.88rem;
     }
     .network-map-wrap {
@@ -910,21 +913,19 @@
           <h3 id="chart-title-a">Top Chart A</h3>
           <div id="chart-a" class="chart"></div>
         </div>
-        <div class="analytics-middle-stack">
-          <div class="panel map-panel analytics-map-panel">
-            <h3>Global Country Flow Map (24h)</h3>
-            <div class="network-map-wrap">
-              <div class="map-controls">
-                <button id="flow-map-zoom-in" type="button" class="ghost" title="Zoom in">+</button>
-                <button id="flow-map-zoom-out" type="button" class="ghost" title="Zoom out">-</button>
-                <button id="flow-map-zoom-reset" type="button" class="ghost" title="Reset zoom">Reset</button>
-              </div>
-              <div class="map-canvas" id="flow-map-wrap"></div>
+        <div class="panel map-panel analytics-map-panel">
+          <h3>Global Country Flow Map (24h)</h3>
+          <div class="network-map-wrap">
+            <div class="map-controls">
+              <button id="flow-map-zoom-in" type="button" class="ghost" title="Zoom in">+</button>
+              <button id="flow-map-zoom-out" type="button" class="ghost" title="Zoom out">-</button>
+              <button id="flow-map-zoom-reset" type="button" class="ghost" title="Reset zoom">Reset</button>
             </div>
-            <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
+            <div class="map-canvas" id="flow-map-wrap"></div>
           </div>
-          <div class="panel dashboard-state-panel">
-            <h3>Snapshot Status</h3>
+          <div class="map-caption" id="flow-map-meta">Source: srcip_country -> dstip_country</div>
+          <div class="dashboard-state-box">
+            <h3 class="dashboard-state-box-title">Snapshot Status</h3>
             <div id="main-msg" class="message"></div>
             <div id="dashboard-meta" class="dashboard-meta muted"></div>
           </div>
