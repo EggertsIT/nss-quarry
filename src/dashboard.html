@@ -301,6 +301,37 @@
       gap: 8px;
       align-items: end;
     }
+    .search-quick-actions,
+    .search-workspace-toggle,
+    .support-action-strip {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(186, 210, 236, 0.9);
+      background: linear-gradient(180deg, rgba(253, 255, 255, 0.97), rgba(242, 248, 255, 0.94));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+    .search-quick-actions-label {
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+    }
+    .search-quick-actions-row,
+    .search-workspace-toggle-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .search-shortcut-btn-active {
+      background: linear-gradient(135deg, #1c76d7 0%, #1557a9 100%) !important;
+      border-color: #134b92 !important;
+      color: #fff !important;
+      box-shadow: 0 10px 20px rgba(28, 94, 171, 0.22);
+    }
     .message { margin: 8px 0 0 0; color: var(--danger); font-size: 0.9rem; min-height: 1.3em; }
     .ok-msg { color: var(--ok); }
     .warn-msg { color: var(--warn); }
@@ -500,6 +531,65 @@
     .search-result-table-card .table-wrap {
       max-height: none;
     }
+    .results-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.9fr) minmax(320px, 0.95fr);
+      gap: 12px;
+      align-items: start;
+    }
+    .row-explainer {
+      border: 1px solid rgba(188, 209, 232, 0.92);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(253, 254, 255, 0.96), rgba(245, 249, 255, 0.94));
+      padding: 14px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      min-height: 220px;
+    }
+    .row-explainer-title {
+      margin-bottom: 10px;
+      color: var(--ink-strong);
+      font-size: 0.96rem;
+      font-weight: 760;
+    }
+    .row-explainer-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .row-explainer-item {
+      min-width: 0;
+    }
+    .row-explainer-label {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+    .row-explainer-value {
+      color: var(--ink);
+      font-size: 0.85rem;
+      line-height: 1.45;
+      word-break: break-word;
+    }
+    .row-explainer-hint {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(204, 220, 240, 0.92);
+      color: var(--ink);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+    .row-explainer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .results-pagination-bottom {
+      justify-content: flex-start;
+    }
     .search-result-table-note {
       padding: 10px;
       color: var(--muted);
@@ -648,6 +738,76 @@
       color: var(--accent-strong);
       font-weight: 800;
     }
+    .support-next-checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .support-next-check-chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(180, 203, 232, 0.92);
+      background: rgba(237, 246, 255, 0.96);
+      color: var(--navy);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .issue-strip {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    }
+    .issue-strip-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 190px;
+      border: 1px solid rgba(186, 210, 236, 0.9);
+      border-radius: 18px;
+      padding: 14px;
+      background: linear-gradient(180deg, rgba(253, 255, 255, 0.98), rgba(242, 248, 255, 0.95));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+    .issue-strip-card[data-active="false"] {
+      opacity: 0.72;
+      background: linear-gradient(180deg, rgba(249, 252, 255, 0.98), rgba(241, 246, 252, 0.94));
+    }
+    .issue-strip-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .issue-strip-title {
+      color: var(--ink-strong);
+      font-size: 0.94rem;
+      font-weight: 760;
+    }
+    .issue-strip-count {
+      color: var(--navy);
+      font-size: 1.05rem;
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+    .issue-strip-summary {
+      color: var(--ink);
+      font-size: 0.86rem;
+      line-height: 1.45;
+    }
+    .issue-strip-example {
+      color: var(--muted);
+      font-size: 0.8rem;
+      line-height: 1.4;
+    }
+    .issue-strip-actions {
+      margin-top: auto;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
     .badge-critical { color: #b91c1c; font-weight: 700; }
     .badge-high { color: #b45309; font-weight: 700; }
     .badge-medium { color: #1d4ed8; font-weight: 700; }
@@ -677,8 +837,14 @@
       text-decoration: underline;
     }
     .results-table .row-action-cell {
-      width: 72px;
+      width: 128px;
       text-align: center;
+    }
+    .row-action-cell {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      justify-content: center;
     }
     .row-action-btn {
       border: 1px solid rgba(162, 190, 223, 0.95);
@@ -711,6 +877,189 @@
       color: var(--muted);
       font-size: 0.84rem;
       line-height: 1.45;
+    }
+    .session-state-grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      margin-top: 10px;
+    }
+    .session-state-card {
+      border: 1px solid rgba(186, 210, 236, 0.9);
+      border-radius: 15px;
+      padding: 12px;
+      background: linear-gradient(180deg, rgba(253, 255, 255, 0.97), rgba(242, 248, 255, 0.94));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+    .session-state-label {
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 0.74rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 700;
+    }
+    .session-state-value {
+      color: var(--ink-strong);
+      font-size: 0.9rem;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .workspace-hint-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .workspace-shortcuts {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.78rem;
+    }
+    .shortcut-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid rgba(183, 205, 232, 0.92);
+      background: linear-gradient(180deg, rgba(252, 254, 255, 0.98), rgba(238, 246, 255, 0.94));
+      color: var(--navy);
+      font-weight: 700;
+    }
+    .shortcut-chip kbd {
+      font: inherit;
+      padding: 2px 6px;
+      border-radius: 8px;
+      border: 1px solid rgba(172, 196, 225, 0.94);
+      background: rgba(255, 255, 255, 0.96);
+      color: var(--accent-strong);
+      box-shadow: inset 0 -1px 0 rgba(178, 200, 228, 0.85);
+    }
+    .triage-strip {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      align-items: stretch;
+    }
+    .triage-card {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 180px;
+      border: 1px solid rgba(186, 210, 236, 0.9);
+      border-radius: 18px;
+      padding: 14px;
+      background: linear-gradient(180deg, rgba(253, 255, 255, 0.98), rgba(242, 248, 255, 0.95));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+    }
+    .triage-card[data-severity="critical"] {
+      border-color: rgba(214, 131, 146, 0.52);
+      background: linear-gradient(180deg, rgba(255, 248, 250, 0.98), rgba(250, 240, 244, 0.95));
+    }
+    .triage-card[data-severity="high"] {
+      border-color: rgba(214, 172, 116, 0.52);
+      background: linear-gradient(180deg, rgba(255, 251, 244, 0.98), rgba(251, 244, 233, 0.95));
+    }
+    .triage-card[data-severity="medium"] {
+      border-color: rgba(136, 181, 233, 0.52);
+    }
+    .triage-card-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+    }
+    .triage-card-title {
+      font-size: 0.94rem;
+      font-weight: 760;
+      color: var(--ink-strong);
+    }
+    .triage-card-summary {
+      color: var(--ink);
+      font-size: 0.87rem;
+      line-height: 1.45;
+    }
+    .triage-card-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .triage-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: rgba(233, 243, 255, 0.96);
+      border: 1px solid rgba(183, 205, 232, 0.92);
+      color: var(--navy);
+      font-size: 0.76rem;
+      font-weight: 700;
+    }
+    .triage-card-action {
+      margin-top: auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .triage-card-count {
+      color: var(--navy);
+      font-size: 0.84rem;
+      font-weight: 740;
+      font-variant-numeric: tabular-nums;
+    }
+    .timeline-marker-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .timeline-marker-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      max-width: 100%;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(180, 204, 232, 0.92);
+      background: linear-gradient(180deg, rgba(252, 254, 255, 0.98), rgba(238, 246, 255, 0.94));
+      color: var(--navy);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .timeline-marker-chip:hover {
+      border-color: rgba(125, 167, 220, 0.94);
+      background: rgba(244, 249, 255, 0.98);
+    }
+    .timeline-marker-chip span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .timeline-status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      align-items: center;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+    .timeline-selection-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(233, 243, 255, 0.96);
+      border: 1px solid rgba(180, 203, 232, 0.92);
+      color: var(--navy);
+      font-weight: 700;
     }
     .pivot-chip-list {
       display: flex;
@@ -1254,6 +1603,9 @@
       .chart-summary {
         grid-template-columns: 1fr;
       }
+      .results-shell {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -1429,7 +1781,19 @@
           <div><label for="f-dst-country">Destination Country</label><input id="f-dst-country" placeholder="United States"></div>
           <div><label for="f-device">Device</label><input id="f-device" placeholder="LAPTOP-123"></div>
           <div><label for="f-dept">Department</label><input id="f-dept" placeholder="IT"></div>
+          <div>
+            <label for="column-preset">Column Preset</label>
+            <select id="column-preset">
+              <option value="helpdesk_default">Helpdesk Default</option>
+              <option value="tls_focus">TLS Focus</option>
+              <option value="policy_focus">Policy Focus</option>
+              <option value="connectivity_focus">Connectivity Focus</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
           <div><label for="columns">Columns (comma-separated, optional)</label><input id="columns" placeholder="time,action,url,login,cip"></div>
+          <input id="f-respsize-hidden" type="hidden" value="">
+          <input id="f-tls-only-hidden" type="hidden" value="">
           <div class="form-actions">
             <div>
               <label>&nbsp;</label>
@@ -1437,6 +1801,25 @@
             </div>
           </div>
         </form>
+        <div class="search-quick-actions">
+          <div class="search-quick-actions-label">Common Support Filters</div>
+          <div class="search-quick-actions-row">
+            <button id="qa-blocked-only" type="button" class="ghost">Blocked Only</button>
+            <button id="qa-403-407" type="button" class="ghost">Respcode 403 / 407</button>
+            <button id="qa-zero-response" type="button" class="ghost">respsize = 0</button>
+            <button id="qa-tls-issues" type="button" class="ghost">TLS Issues</button>
+            <button id="qa-last-15m" type="button" class="ghost">Last 15m</button>
+            <button id="qa-clear" type="button" class="ghost">Clear Shortcuts</button>
+          </div>
+          <div id="quick-filter-state" class="muted">No quick filters active.</div>
+        </div>
+        <div class="search-workspace-toggle">
+          <div class="search-quick-actions-label">Search Workspace</div>
+          <div class="search-workspace-toggle-row">
+            <button id="workspace-summary" type="button" class="ghost active">Summary Focus</button>
+            <button id="workspace-results" type="button" class="ghost">Results Focus</button>
+          </div>
+        </div>
         <div id="search-msg" class="message"></div>
         <div id="search-loading" class="search-loading hidden" role="status" aria-live="polite">
           <span class="search-spinner" aria-hidden="true"></span>
@@ -1451,29 +1834,66 @@
             <button id="investigation-create" type="button" class="primary">Create Session</button>
             <input id="investigation-id-input" placeholder="Load investigation session by ID">
             <button id="investigation-load" type="button" class="ghost">Load</button>
+            <button id="investigation-reset-window" type="button" class="ghost">Reset Time Window</button>
             <button id="investigation-export" type="button" class="ghost">Export Investigation Package</button>
           </div>
           <div id="investigation-msg" class="message"></div>
           <div id="investigation-meta" class="investigation-meta muted">No active investigation session.</div>
+          <div id="investigation-session-state" class="session-state-grid"></div>
           <div>
             <div class="muted" style="margin-bottom:6px;">Pivot Filters</div>
             <div id="pivot-chip-list" class="pivot-chip-list muted">No pivot filters yet.</div>
           </div>
+          <div class="workspace-hint-bar">
+            <div class="workspace-shortcuts" aria-label="Workspace shortcuts">
+              <span class="shortcut-chip"><kbd>f</kbd><span>Focus filters</span></span>
+              <span class="shortcut-chip"><kbd>[</kbd><span>Prev page</span></span>
+              <span class="shortcut-chip"><kbd>]</kbd><span>Next page</span></span>
+              <span class="shortcut-chip"><kbd>p</kbd><span>Pin selected row</span></span>
+              <span class="shortcut-chip"><kbd>e</kbd><span>Export case</span></span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+      <div id="support-summary-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
         <div class="section-header">
           <h3>Support Summary</h3>
           <div>
+            <button id="support-show-rows" type="button" class="ghost">Show Matching Rows</button>
+            <button id="support-reset-window" type="button" class="ghost">Reset Time Window</button>
             <button id="export-pdf-summary" type="button" class="ghost">Export Incident Report (PDF)</button>
           </div>
         </div>
         <div id="support-summary-msg" class="message"></div>
         <div id="support-summary" class="support-summary-shell muted">Run a search or analyze a PCAP/PCAPNG file to generate a support summary.</div>
+        <div class="support-action-strip">
+          <div class="search-quick-actions-label">Suggested Next Checks</div>
+          <div id="support-next-checks" class="support-next-checks muted">Run a search to get guided next checks.</div>
+        </div>
       </div>
 
-      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+      <div id="issue-strip-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
+        <div class="section-header">
+          <h3>Issue Type Quick Focus</h3>
+          <div class="muted">Fixed helpdesk buckets for first-line triage.</div>
+        </div>
+        <div id="issue-strip" class="issue-strip">
+          <div class="muted">Run a search to calculate helpdesk issue buckets.</div>
+        </div>
+      </div>
+
+      <div id="triage-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
+        <div class="section-header">
+          <h3>Root Cause Triage</h3>
+          <div class="muted">Click a card to focus the investigation.</div>
+        </div>
+        <div id="triage-cards" class="triage-strip">
+          <div class="muted">Run a search to calculate root-cause triage.</div>
+        </div>
+      </div>
+
+      <div id="timeline-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
         <div class="section-header">
           <h3>Investigation Timeline</h3>
           <div id="timeline-meta" class="muted">Run a search to render timeline buckets.</div>
@@ -1481,16 +1901,19 @@
         <div id="timeline-chart" class="timeline-chart-wrap">
           <div class="timeline-empty">Run a search to render timeline buckets.</div>
         </div>
+        <div id="timeline-selection" class="timeline-status-row muted">No active bucket selection.</div>
+        <div id="timeline-marker-list" class="timeline-marker-list muted">No markers in the current search window.</div>
         <div class="timeline-controls">
           <label for="timeline-brush-start">Brush Start</label>
           <input id="timeline-brush-start" type="range" min="0" max="0" value="0" disabled>
           <label for="timeline-brush-end">Brush End</label>
           <input id="timeline-brush-end" type="range" min="0" max="0" value="0" disabled>
           <button id="timeline-apply" type="button" class="ghost" disabled>Apply Brush to Time Window</button>
+          <button id="timeline-reset" type="button" class="ghost" disabled>Reset Time Window</button>
         </div>
       </div>
 
-      <div class="panel map-panel" style="margin-top: 14px;">
+      <div id="flow-map-panel" class="panel map-panel" style="margin-top: 14px;">
         <h3>Search Country Flow Map</h3>
         <div class="network-map-wrap">
           <div class="map-controls">
@@ -1503,13 +1926,13 @@
         <div class="map-caption" id="search-flow-map-meta">Run a search to render source->destination country flows.</div>
       </div>
 
-      <div class="panel sankey-panel" style="margin-top: 14px;">
+      <div id="sankey-panel" class="panel sankey-panel" style="margin-top: 14px;">
         <h3>Search Sankey</h3>
         <div id="search-sankey-wrap" class="sankey-canvas"></div>
         <div class="map-caption" id="search-sankey-meta">Run a search to render policy reason -> response code mapping.</div>
       </div>
 
-      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+      <div id="insights-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
         <h3>Search Insights</h3>
         <div class="insights-grid">
           <div class="insight-card">
@@ -1527,10 +1950,11 @@
         </div>
       </div>
 
-      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+      <div id="results-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
         <div class="section-header">
           <h3>Search Results</h3>
           <div>
+            <button id="grouped-drilldown" type="button" class="ghost" disabled>Drill Selected Group To Raw</button>
             <button id="export-csv" type="button" class="ghost">Export Logs (CSV)</button>
           </div>
         </div>
@@ -1540,7 +1964,10 @@
           <button id="search-next" type="button" class="ghost">Next</button>
           <div id="search-page-info" class="muted">Page 1</div>
         </div>
-        <div id="results" class="table-wrap results-table-wrap" style="margin-top: 8px;"></div>
+        <div class="results-shell" style="margin-top: 8px;">
+          <div id="results" class="table-wrap results-table-wrap"></div>
+          <div id="row-explainer" class="row-explainer muted">Select a row to see helpdesk-focused details.</div>
+        </div>
         <div id="search-result-tables" class="search-result-tables-grid">
           <div class="search-result-table-card">
             <h4>Response Codes</h4>
@@ -1559,9 +1986,14 @@
             <div id="search-table-country-flow" class="table-wrap"></div>
           </div>
         </div>
+        <div class="toolbar results-pagination-bottom" style="margin-top: 12px;">
+          <button id="search-prev-bottom" type="button" class="ghost">Prev</button>
+          <button id="search-next-bottom" type="button" class="ghost">Next</button>
+          <div id="search-page-info-bottom" class="muted">Page 1</div>
+        </div>
       </div>
 
-      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+      <div id="evidence-panel" class="panel panel-full-bleed" style="margin-top: 14px;">
         <h3>Evidence Basket</h3>
         <div id="evidence-msg" class="message"></div>
         <div id="evidence-list" class="evidence-list muted">No pinned evidence rows.</div>
@@ -1701,8 +2133,13 @@
     let activeInvestigation = null;
     let latestSearchRowsData = [];
     let latestTimelinePoints = [];
+    let latestTimelineMarkers = [];
+    let latestSearchTriage = null;
+    let latestSupportSummary = null;
     let selectedSearchRow = null;
     let selectedSearchRowIndex = -1;
+    let activeSearchFocusLabel = "";
+    let searchWorkspaceMode = "summary";
     const mapViewState = {};
     const PIVOTABLE_FIELDS = new Set([
       "sip",
@@ -1880,6 +2317,8 @@
       if (runBtn) runBtn.disabled = isLoading;
       const exportBtn = $("export-csv");
       if (exportBtn) exportBtn.disabled = isLoading;
+      const drillBtn = $("grouped-drilldown");
+      if (drillBtn) drillBtn.disabled = isLoading || currentSearchViewMode() === "raw" || !selectedSearchRow;
       const exportPdfBtn = $("export-pdf-summary");
       if (exportPdfBtn) exportPdfBtn.disabled = isLoading;
       const invCreate = $("investigation-create");
@@ -1895,19 +2334,25 @@
     }
 
     function updateSearchPaginationMeta() {
-      const info = $("search-page-info");
-      if (!info) return;
       const pageLabel = Number.isFinite(searchPage) && searchPage > 0 ? searchPage : 1;
       const pageSizeLabel = Number.isFinite(searchPageSize) && searchPageSize > 0 ? searchPageSize : 0;
       const rowsLabel = Number.isFinite(searchLastRows) && searchLastRows >= 0 ? searchLastRows : 0;
       const limitLabel = latestSearchRequest && Number.isFinite(Number(latestSearchRequest.limit))
         ? Number(latestSearchRequest.limit)
         : 0;
-      info.textContent = `Page ${pageLabel} | Rows on page: ${rowsLabel} | Page size: ${pageSizeLabel} | Limit: ${limitLabel}`;
-      const prevBtn = $("search-prev");
-      if (prevBtn) prevBtn.disabled = pageLabel <= 1;
-      const nextBtn = $("search-next");
-      if (nextBtn) nextBtn.disabled = !searchHasMore;
+      const text = `Page ${pageLabel} | Rows on page: ${rowsLabel} | Page size: ${pageSizeLabel} | Limit: ${limitLabel}`;
+      for (const id of ["search-page-info", "search-page-info-bottom"]) {
+        const info = $(id);
+        if (info) info.textContent = text;
+      }
+      for (const id of ["search-prev", "search-prev-bottom"]) {
+        const prevBtn = $(id);
+        if (prevBtn) prevBtn.disabled = pageLabel <= 1;
+      }
+      for (const id of ["search-next", "search-next-bottom"]) {
+        const nextBtn = $(id);
+        if (nextBtn) nextBtn.disabled = !searchHasMore;
+      }
     }
 
     function setSearchLoadingPhase(token, text) {
@@ -3028,6 +3473,202 @@
       return value;
     }
 
+    function setSelectValue(id, value, fallback = "") {
+      const el = $(id);
+      if (!el) return;
+      const normalized = value == null ? "" : String(value);
+      if (Array.from(el.options || []).some((option) => option.value === normalized)) {
+        el.value = normalized;
+      } else {
+        el.value = fallback;
+      }
+    }
+
+    function currentWorkspaceFocusLabel() {
+      return String(activeSearchFocusLabel || "").trim();
+    }
+
+    function isHelpdeskOrAnalystUser() {
+      return Boolean(
+        currentUser
+        && (currentUser.role === "helpdesk" || currentUser.role === "analyst")
+      );
+    }
+
+    function preferredSearchWorkspaceMode() {
+      return isHelpdeskOrAnalystUser() ? "summary" : "results";
+    }
+
+    function setSearchWorkspaceMode(mode) {
+      searchWorkspaceMode = mode === "results" ? "results" : "summary";
+      const summarySections = [
+        "support-summary-panel",
+        "issue-strip-panel",
+        "triage-panel",
+        "timeline-panel",
+      ];
+      const resultsSections = [
+        "flow-map-panel",
+        "sankey-panel",
+        "insights-panel",
+        "results-panel",
+      ];
+      for (const id of summarySections) {
+        $(id)?.classList.toggle("hidden", searchWorkspaceMode === "results");
+      }
+      for (const id of resultsSections) {
+        $(id)?.classList.toggle("hidden", searchWorkspaceMode === "summary");
+      }
+      $("workspace-summary")?.classList.toggle("active", searchWorkspaceMode === "summary");
+      $("workspace-results")?.classList.toggle("active", searchWorkspaceMode === "results");
+    }
+
+    function showSearchResultsWorkspace() {
+      setSearchWorkspaceMode("results");
+    }
+
+    function mappedSearchColumns(values) {
+      return Array.from(
+        new Set(values.map((value) => String(value || "").trim()).filter((value) => value.length > 0))
+      );
+    }
+
+    function currentColumnPresetMap() {
+      return {
+        helpdesk_default: mappedSearchColumns([
+          mappedFieldName("time_field", "time"),
+          mappedFieldName("action_field", "action"),
+          mappedFieldName("reason_field", "reason"),
+          mappedFieldName("response_code_field", "respcode"),
+          mappedFieldName("server_ip_field", "sip"),
+          mappedFieldName("url_field", "url"),
+          mappedFieldName("user_field", "login"),
+          mappedFieldName("device_field", "devicehostname"),
+          mappedFieldName("category_field", "urlcat"),
+          "respsize",
+        ]),
+        tls_focus: mappedSearchColumns([
+          mappedFieldName("time_field", "time"),
+          mappedFieldName("action_field", "action"),
+          mappedFieldName("reason_field", "reason"),
+          mappedFieldName("response_code_field", "respcode"),
+          mappedFieldName("server_ip_field", "sip"),
+          "clienttlsversion",
+          "srvtlsversion",
+          "externalspr",
+          "ssl_rulename",
+          "cltsslfailreason",
+          "is_ssluntrustedca",
+          "is_sslselfsigned",
+          "is_sslexpiredca",
+        ]),
+        policy_focus: mappedSearchColumns([
+          mappedFieldName("time_field", "time"),
+          mappedFieldName("action_field", "action"),
+          mappedFieldName("reason_field", "reason"),
+          mappedFieldName("response_code_field", "respcode"),
+          "ruletype",
+          "rulelabel",
+          mappedFieldName("category_field", "urlcat"),
+          mappedFieldName("user_field", "login"),
+          mappedFieldName("department_field", "dept"),
+          mappedFieldName("server_ip_field", "sip"),
+          mappedFieldName("url_field", "url"),
+        ]),
+        connectivity_focus: mappedSearchColumns([
+          mappedFieldName("time_field", "time"),
+          mappedFieldName("action_field", "action"),
+          mappedFieldName("reason_field", "reason"),
+          mappedFieldName("response_code_field", "respcode"),
+          mappedFieldName("server_ip_field", "sip"),
+          mappedFieldName("source_ip_field", "cip"),
+          "respsize",
+          "reqsize",
+          mappedFieldName("source_country_field", "srcip_country"),
+          mappedFieldName("destination_country_field", "dstip_country"),
+          "trafficredirectmethod",
+          "location",
+        ]),
+      };
+    }
+
+    function applyColumnPreset(name, options = {}) {
+      const presetName = String(name || "").trim();
+      const presets = currentColumnPresetMap();
+      if (presetName === "custom" || !Object.prototype.hasOwnProperty.call(presets, presetName)) {
+        if (options.syncSelect !== false) {
+          setSelectValue("column-preset", "custom", "custom");
+        }
+        return;
+      }
+      $("columns").value = presets[presetName].join(", ");
+      if (options.syncSelect !== false) {
+        setSelectValue("column-preset", presetName, "custom");
+      }
+    }
+
+    function currentSearchColumnList() {
+      return mappedSearchColumns(
+        String($("columns")?.value || "")
+          .split(",")
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      );
+    }
+
+    function detectColumnPresetName() {
+      const current = currentSearchColumnList();
+      if (current.length === 0) return "custom";
+      const presets = currentColumnPresetMap();
+      for (const [presetName, columns] of Object.entries(presets)) {
+        if (columns.length !== current.length) continue;
+        const expected = columns.join("|");
+        const actual = current.join("|");
+        if (expected === actual) return presetName;
+      }
+      return "custom";
+    }
+
+    function syncColumnPresetSelection() {
+      setSelectValue("column-preset", detectColumnPresetName(), "custom");
+    }
+
+    function ensureSearchColumnsInitialized() {
+      if (String($("columns")?.value || "").trim().length > 0) {
+        syncColumnPresetSelection();
+        return;
+      }
+      applyColumnPreset("helpdesk_default");
+    }
+
+    function focusResultsPanel() {
+      const panel = $("results-panel");
+      if (!panel) return;
+      panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function applySearchQuickFilterState() {
+      const responseSizeValue = String($("f-respsize-hidden").value || "").trim();
+      const tlsOnly = $("f-tls-only-hidden").value === "true";
+      const activeButtons = {
+        "qa-blocked-only": Boolean(normalizeFilterValue("f-action") === "Blocked"),
+        "qa-403-407": Boolean(String($("f-respcode").value || "").trim() === "403,407"),
+        "qa-zero-response": responseSizeValue === "0",
+        "qa-tls-issues": tlsOnly,
+      };
+      for (const [id, active] of Object.entries(activeButtons)) {
+        $(id)?.classList.toggle("search-shortcut-btn-active", active);
+      }
+      const states = [];
+      if (activeButtons["qa-blocked-only"]) states.push("Blocked only");
+      if (activeButtons["qa-403-407"]) states.push("Respcode 403/407");
+      if (activeButtons["qa-zero-response"]) states.push("respsize=0");
+      if (activeButtons["qa-tls-issues"]) states.push("TLS issues");
+      $("quick-filter-state").textContent = states.length > 0
+        ? `Active quick filters: ${states.join(" | ")}`
+        : "No quick filters active.";
+    }
+
     function buildSearchRequestFromForm() {
       const limitValue = Number.parseInt($("limit").value, 10) || 5000;
       const pageSizeValue = Number.parseInt($("page-size").value, 10) || 200;
@@ -3039,9 +3680,11 @@
           url: normalizeFilterValue("f-url"),
           action: normalizeFilterValue("f-action"),
           response_code: normalizeFilterValue("f-respcode"),
+          response_size: normalizeFilterValue("f-respsize-hidden"),
           reason: normalizeFilterValue("f-reason"),
           threat: normalizeFilterValue("f-threat"),
           category: normalizeFilterValue("f-category"),
+          tls_issue_only: $("f-tls-only-hidden").value === "true" ? true : null,
           source_ip: normalizeFilterValue("f-ip"),
           server_ip: normalizeFilterValue("f-sip"),
           source_country: normalizeFilterValue("f-src-country"),
@@ -3055,6 +3698,8 @@
       const rawCols = $("columns").value.trim();
       if (rawCols.length > 0) {
         req.columns = rawCols.split(",").map(v => v.trim()).filter(v => v.length > 0);
+      } else {
+        req.columns = null;
       }
       latestSearchRequest = req;
       return req;
@@ -3116,6 +3761,7 @@
       if (!search) return;
       activeInvestigation = session;
       $("investigation-id-input").value = session.id || "";
+      activeSearchFocusLabel = session?.workspace?.focus_label ? String(session.workspace.focus_label) : "";
       if (search.time_from) {
         const from = new Date(search.time_from);
         if (!Number.isNaN(from.getTime())) $("time-from").value = toLocalInputValue(from);
@@ -3131,9 +3777,11 @@
       setInputValue("f-url", filters.url || "");
       setInputValue("f-action", filters.action || "");
       setInputValue("f-respcode", filters.response_code || "");
+      setInputValue("f-respsize-hidden", filters.response_size || "");
       setInputValue("f-reason", filters.reason || "");
       setInputValue("f-threat", filters.threat || "");
       setInputValue("f-category", filters.category || "");
+      setInputValue("f-tls-only-hidden", filters.tls_issue_only ? "true" : "");
       setInputValue("f-ip", filters.source_ip || "");
       setInputValue("f-sip", filters.server_ip || "");
       setInputValue("f-src-country", filters.source_country || "");
@@ -3141,24 +3789,108 @@
       setInputValue("f-device", filters.device || "");
       setInputValue("f-dept", filters.department || "");
       setInputValue("columns", Array.isArray(search.columns) ? search.columns.join(", ") : "");
+      setSelectValue("view-mode", session?.workspace?.active_view_mode || "raw", "raw");
+      syncColumnPresetSelection();
       if (Array.isArray(session.pivots) && session.pivots.length > 0) {
         applyPivotsToForm(session);
       }
+      applySearchQuickFilterState();
       renderInvestigationMeta();
       renderPivotChips();
       renderEvidenceBasket();
     }
 
+    function mergeCsvFilterValue(currentValue, nextValue) {
+      const values = []
+        .concat(String(currentValue || "").split(","))
+        .concat(String(nextValue || "").split(","))
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+      return Array.from(new Set(values)).join(", ");
+    }
+
+    function applySearchFiltersToForm(filters, options = {}) {
+      const merge = options.merge !== false;
+      const mapping = {
+        user: "f-user",
+        url: "f-url",
+        action: "f-action",
+        response_code: "f-respcode",
+        response_size: "f-respsize-hidden",
+        reason: "f-reason",
+        threat: "f-threat",
+        category: "f-category",
+        source_ip: "f-ip",
+        server_ip: "f-sip",
+        source_country: "f-src-country",
+        destination_country: "f-dst-country",
+        device: "f-device",
+        department: "f-dept",
+      };
+      for (const [filterKey, inputId] of Object.entries(mapping)) {
+        if (!Object.prototype.hasOwnProperty.call(filters || {}, filterKey)) continue;
+        const rawValue = filters[filterKey];
+        if (rawValue == null || String(rawValue).trim().length === 0) continue;
+        const nextValue = String(rawValue).trim();
+        const binding = pivotFieldBinding(filterKey);
+        if (binding && binding.multi && merge) {
+          setInputValue(inputId, mergeCsvFilterValue($(inputId).value, nextValue));
+        } else {
+          setInputValue(inputId, nextValue);
+        }
+      }
+      if (Object.prototype.hasOwnProperty.call(filters || {}, "tls_issue_only")) {
+        setInputValue("f-tls-only-hidden", filters.tls_issue_only ? "true" : "");
+      }
+      applySearchQuickFilterState();
+    }
+
     function renderInvestigationMeta() {
       const host = $("investigation-meta");
+      const stateHost = $("investigation-session-state");
       if (!activeInvestigation) {
         host.textContent = "No active investigation session.";
+        stateHost.innerHTML = "";
         return;
       }
       const session = activeInvestigation;
       const updated = session.updated_at ? formatDashboardTimestamp(session.updated_at) : "unknown";
       const expires = session.expires_at ? formatDashboardTimestamp(session.expires_at) : "unknown";
       host.textContent = `Session ${session.id} | Owner: ${session.owner} | Updated: ${updated} | Expires: ${expires} | Pivots: ${(session.pivots || []).length} | Pins: ${(session.pinned_items || []).length}`;
+      const originalFrom = session?.workspace?.original_time_from
+        ? formatDashboardTimestamp(session.workspace.original_time_from)
+        : "unknown";
+      const originalTo = session?.workspace?.original_time_to
+        ? formatDashboardTimestamp(session.workspace.original_time_to)
+        : "unknown";
+      const currentFrom = session?.search?.time_from
+        ? formatDashboardTimestamp(session.search.time_from)
+        : "unknown";
+      const currentTo = session?.search?.time_to
+        ? formatDashboardTimestamp(session.search.time_to)
+        : "unknown";
+      const focus = session?.workspace?.focus_label
+        ? escapeHtml(String(session.workspace.focus_label))
+        : "No explicit focus";
+      const viewMode = formatDisplayName(session?.workspace?.active_view_mode || "raw");
+      stateHost.innerHTML = `
+        <div class="session-state-card">
+          <div class="session-state-label">Original Window</div>
+          <div class="session-state-value">${escapeHtml(originalFrom)}<br>${escapeHtml(originalTo)}</div>
+        </div>
+        <div class="session-state-card">
+          <div class="session-state-label">Current Window</div>
+          <div class="session-state-value">${escapeHtml(currentFrom)}<br>${escapeHtml(currentTo)}</div>
+        </div>
+        <div class="session-state-card">
+          <div class="session-state-label">Active Lens</div>
+          <div class="session-state-value">${escapeHtml(viewMode)}</div>
+        </div>
+        <div class="session-state-card">
+          <div class="session-state-label">Current Focus</div>
+          <div class="session-state-value">${focus}</div>
+        </div>
+      `;
     }
 
     function renderPivotChips() {
@@ -3261,10 +3993,19 @@
       if (!req.time_from || !req.time_to) {
         throw new Error("Provide valid from/to time before creating an investigation session.");
       }
-      const session = await apiFetch("/api/investigations", {
+      let session = await apiFetch("/api/investigations", {
         method: "POST",
         body: { search: req },
       });
+      if (currentSearchViewMode() !== "raw" || currentWorkspaceFocusLabel()) {
+        session = await apiFetch(`/api/investigations/${encodeURIComponent(session.id)}`, {
+          method: "PATCH",
+          body: {
+            view_mode: currentSearchViewMode(),
+            focus_label: currentWorkspaceFocusLabel() || null,
+          },
+        });
+      }
       applySessionToForm(session);
       setMessage("investigation-msg", `Investigation session ${session.id} created.`, true);
       return session;
@@ -3305,6 +4046,45 @@
         setMessage("investigation-msg", message, true);
       }
       return session;
+    }
+
+    async function resetInvestigationWindow() {
+      if (!activeInvestigation || !activeInvestigation.workspace) {
+        throw new Error("Create or load an investigation session first to reset the timeline window.");
+      }
+      const originalFrom = activeInvestigation.workspace.original_time_from;
+      const originalTo = activeInvestigation.workspace.original_time_to;
+      if (!originalFrom || !originalTo) {
+        throw new Error("Original investigation window is unavailable.");
+      }
+      const from = new Date(originalFrom);
+      const to = new Date(originalTo);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        throw new Error("Original investigation window is invalid.");
+      }
+      $("time-from").value = toLocalInputValue(from);
+      $("time-to").value = toLocalInputValue(to);
+      activeSearchFocusLabel = "";
+      searchPage = 1;
+      await patchActiveInvestigation({
+        time_from: originalFrom,
+        time_to: originalTo,
+        page: 1,
+        view_mode: currentSearchViewMode(),
+        focus_label: null,
+      }, "Timeline window reset to the original investigation range.");
+      await runSearch({ resetPage: true });
+    }
+
+    async function applyTriageBucket(bucket) {
+      if (!bucket || typeof bucket !== "object") {
+        return;
+      }
+      applySearchFiltersToForm(bucket.filters || {}, { merge: true });
+      activeSearchFocusLabel = String(bucket.title || bucket.id || "triage focus").trim();
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("investigation-msg", `Focused workspace on ${bucket.title || "triage card"}.`, true);
     }
 
     async function movePivot(fromIndex, toIndex) {
@@ -3356,6 +4136,34 @@
       applyPivotsToForm(activeInvestigation);
       searchPage = 1;
       await runSearch({ resetPage: true });
+    }
+
+    async function drillDownGroupedRow(row) {
+      if (!row || typeof row !== "object") {
+        throw new Error("Select a grouped row first.");
+      }
+      const filters = {};
+      for (const [key, value] of Object.entries(row)) {
+        const normalized = String(value == null ? "" : value).trim();
+        if (!normalized || key === "count") continue;
+        if (key === "sip" || key === "server_ip") filters.server_ip = normalized;
+        if (key === "reason") filters.reason = normalized;
+        if (key === "respcode" || key === "response_code") filters.response_code = normalized;
+        if (key === "login" || key === "user") filters.user = normalized;
+        if (key === "devicehostname" || key === "deviceowner" || key === "device") filters.device = normalized;
+        if (key === "action") filters.action = normalized;
+      }
+      if (Object.keys(filters).length === 0) {
+        throw new Error("Selected grouped row does not expose drilldown filters.");
+      }
+      setSelectValue("view-mode", "raw", "raw");
+      applySearchFiltersToForm(filters, { merge: true });
+      activeSearchFocusLabel = Object.entries(filters)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(" | ");
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("search-msg", "Grouped result drilled down to raw rows.", true);
     }
 
     async function pinEvidenceRow(row) {
@@ -3416,6 +4224,8 @@
         limit: searchReq.limit,
         page: queryReq.page,
         page_size: queryReq.page_size,
+        view_mode: currentSearchViewMode(),
+        focus_label: currentWorkspaceFocusLabel() || null,
       });
     }
 
@@ -3481,6 +4291,7 @@
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       if (renderToken !== latestSearchRenderToken) return;
       const rows = Array.isArray(result?.rows) ? result.rows : [];
+      setTriageLoading();
       try {
         const triage = await apiFetch("/api/search/triage", {
           method: "POST",
@@ -3488,9 +4299,13 @@
         });
         renderSearchInsightsFromTriage(triage);
       } catch (err) {
+        latestSearchTriage = null;
+        renderIssueStrip(latestSupportSummary, null);
+        $("triage-cards").innerHTML = "<div class='muted'>Root-cause triage is unavailable for the current search.</div>";
         renderSearchInsights(rows);
       }
       if (renderToken !== latestSearchRenderToken) return;
+      setTimelineLoading();
       try {
         const timeline = await apiFetch("/api/search/timeline", {
           method: "POST",
@@ -4027,10 +4842,13 @@
     }
 
     function resetSupportSummary(message = "Run a search or analyze a PCAP/PCAPNG file to generate a support summary.") {
+      latestSupportSummary = null;
       setMessage("support-summary-msg", "");
       const host = $("support-summary");
       host.classList.add("muted");
       host.textContent = message;
+      $("support-next-checks").textContent = "Run a search to get guided next checks.";
+      renderIssueStrip(null, latestSearchTriage);
     }
 
     function renderSummaryItemList(title, items) {
@@ -4058,6 +4876,7 @@
     }
 
     function renderSupportSummary(summary) {
+      latestSupportSummary = summary;
       const host = $("support-summary");
       host.classList.remove("muted");
 
@@ -4140,6 +4959,236 @@
           ${missingInputsHtml}
         </div>
       `;
+      renderSupportNextChecks(summary);
+      renderIssueStrip(summary, latestSearchTriage);
+    }
+
+    function renderSupportNextChecks(summary) {
+      const host = $("support-next-checks");
+      host.innerHTML = "";
+      const checks = Array.isArray(summary?.recommended_next_checks)
+        ? summary.recommended_next_checks.filter(Boolean).slice(0, 8)
+        : [];
+      if (checks.length === 0) {
+        host.classList.add("muted");
+        host.textContent = "No guided next checks are available for the current search.";
+        return;
+      }
+      host.classList.remove("muted");
+      for (const item of checks) {
+        const chip = document.createElement("div");
+        chip.className = "support-next-check-chip";
+        chip.textContent = item;
+        host.appendChild(chip);
+      }
+    }
+
+    function supportItemsTotal(items) {
+      return Array.isArray(items)
+        ? items.reduce((sum, item) => sum + Number(item?.count || 0), 0)
+        : 0;
+    }
+
+    function firstBucketById(triage, id) {
+      const buckets = Array.isArray(triage?.root_cause_buckets) ? triage.root_cause_buckets : [];
+      return buckets.find((bucket) => String(bucket?.id || "") === id) || null;
+    }
+
+    function firstMatchingSummaryItem(items, matcher) {
+      if (!Array.isArray(items)) return null;
+      return items.find((item) => matcher(String(item?.value || "").toLowerCase())) || null;
+    }
+
+    function connectivitySummarySignal(summary) {
+      const items = Array.isArray(summary?.policy_reason_summary) ? summary.policy_reason_summary : [];
+      const matches = items.filter((item) => {
+        const reason = String(item?.value || "").toLowerCase();
+        return reason.includes("probe")
+          || reason.includes("timed out")
+          || reason.includes("internal error")
+          || reason.includes("missing config")
+          || reason.includes("dnat")
+          || reason.includes("firewall");
+      });
+      if (matches.length === 0) return null;
+      return {
+        count: matches.reduce((sum, item) => sum + Number(item?.count || 0), 0),
+        example: String(matches[0]?.value || ""),
+        filters: { reason: String(matches[0]?.value || "") },
+      };
+    }
+
+    function renderIssueStrip(summary, triage) {
+      const host = $("issue-strip");
+      host.innerHTML = "";
+      const policyBucket = firstBucketById(triage, "policy_block");
+      const tlsBucket = firstBucketById(triage, "ssl_tls");
+      const zeroBucket = firstBucketById(triage, "zero_response");
+      const geoBucket = firstBucketById(triage, "geo_issue");
+      const threatBucket = firstBucketById(triage, "threat_reputation");
+      const connectivity = connectivitySummarySignal(summary);
+      const cards = [
+        {
+          id: "policy_block",
+          title: "Policy Block",
+          count: Number(policyBucket?.count || 0),
+          summary: policyBucket?.summary || "Blocked traffic or policy denial signals.",
+          example: Array.isArray(policyBucket?.example_values) ? policyBucket.example_values[0] : "",
+          filters: policyBucket?.filters || { action: "Blocked" },
+        },
+        {
+          id: "tls_certificate",
+          title: "TLS / Certificate",
+          count: Number(tlsBucket?.count || supportItemsTotal(summary?.tls_or_certificate_indicators)),
+          summary: tlsBucket?.summary || "TLS, certificate, or handshake-related investigation path.",
+          example: Array.isArray(tlsBucket?.example_values) ? tlsBucket.example_values[0] : String(summary?.tls_or_certificate_indicators?.[0]?.value || ""),
+          filters: tlsBucket?.filters || { tls_issue_only: true },
+        },
+        {
+          id: "zero_response",
+          title: "Zero Response",
+          count: Number(zeroBucket?.count || supportItemsTotal(summary?.zero_response_destinations)),
+          summary: zeroBucket?.summary || "Connections with response size zero or incomplete response delivery.",
+          example: Array.isArray(zeroBucket?.example_values) ? zeroBucket.example_values[0] : String(summary?.zero_response_destinations?.[0]?.value || ""),
+          filters: zeroBucket?.filters || { response_size: "0" },
+        },
+        {
+          id: "geo_country",
+          title: "Geo / Country",
+          count: Number(geoBucket?.count || supportItemsTotal(summary?.geo_indicators)),
+          summary: geoBucket?.summary || "Country-based restriction or geo-risk investigation path.",
+          example: Array.isArray(geoBucket?.example_values) ? geoBucket.example_values[0] : String(summary?.geo_indicators?.[0]?.value || ""),
+          filters: geoBucket?.filters || {},
+        },
+        {
+          id: "threat_reputation",
+          title: "Threat / Reputation",
+          count: Number(threatBucket?.count || supportItemsTotal(summary?.threat_indicators)),
+          summary: threatBucket?.summary || "Threat, sandbox, malware, or reputation-based protection signals.",
+          example: Array.isArray(threatBucket?.example_values) ? threatBucket.example_values[0] : String(summary?.threat_indicators?.[0]?.value || ""),
+          filters: threatBucket?.filters || { threat: String(summary?.threat_indicators?.[0]?.value || "") },
+        },
+        {
+          id: "connectivity_infra",
+          title: "Connectivity / Infra",
+          count: Number(connectivity?.count || 0),
+          summary: connectivity?.count
+            ? "Firewall, probe, config, or infrastructure-side connection failures."
+            : "No strong connectivity or infrastructure issue signals in the current window.",
+          example: connectivity?.example || "",
+          filters: connectivity?.filters || {},
+        },
+      ];
+
+      for (const card of cards) {
+        const active = Number(card.count || 0) > 0;
+        const article = document.createElement("div");
+        article.className = "issue-strip-card";
+        article.dataset.active = active ? "true" : "false";
+        article.innerHTML = `
+          <div class="issue-strip-head">
+            <div class="issue-strip-title">${escapeHtml(card.title)}</div>
+            <div class="issue-strip-count">${Number(card.count || 0).toLocaleString()}</div>
+          </div>
+          <div class="issue-strip-summary">${escapeHtml(card.summary)}</div>
+          <div class="issue-strip-example">${card.example ? `Top signal: ${escapeHtml(card.example)}` : "No strong signal in current window."}</div>
+          <div class="issue-strip-actions">
+            <button type="button" class="ghost"${active ? "" : " disabled"}>Focus</button>
+            <button type="button" class="ghost"${active ? "" : " disabled"}>Rows</button>
+          </div>
+        `;
+        const [focusBtn, rowsBtn] = article.querySelectorAll("button");
+        focusBtn?.addEventListener("click", async () => {
+          try {
+            await applyIssueStripCard(card, false);
+          } catch (err) {
+            setMessage("search-msg", err.message || "Failed to focus issue type.");
+          }
+        });
+        rowsBtn?.addEventListener("click", async () => {
+          try {
+            await applyIssueStripCard(card, true);
+          } catch (err) {
+            setMessage("search-msg", err.message || "Failed to show issue rows.");
+          }
+        });
+        host.appendChild(article);
+      }
+    }
+
+    async function applyIssueStripCard(card, showRows) {
+      if (!card || Number(card.count || 0) <= 0) {
+        return;
+      }
+      applySearchFiltersToForm(card.filters || {}, { merge: true });
+      activeSearchFocusLabel = String(card.title || card.id || "helpdesk issue").trim();
+      if (showRows) {
+        showSearchResultsWorkspace();
+      } else {
+        setSearchWorkspaceMode("summary");
+      }
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("search-msg", `${card.title} focus applied.`, true);
+    }
+
+    function clearHelpdeskShortcutFilters() {
+      $("f-respsize-hidden").value = "";
+      $("f-tls-only-hidden").value = "";
+      if (String($("f-action").value || "").trim() === "Blocked") {
+        $("f-action").value = "";
+      }
+      if (String($("f-respcode").value || "").trim() === "403,407") {
+        $("f-respcode").value = "";
+      }
+      applySearchQuickFilterState();
+    }
+
+    async function runQuickFilterAction(action) {
+      switch (action) {
+        case "blocked_only":
+          setInputValue("f-action", "Blocked");
+          break;
+        case "403_407":
+          setInputValue("f-respcode", "403,407");
+          break;
+        case "zero_response":
+          setInputValue("f-respsize-hidden", "0");
+          break;
+        case "tls_issues":
+          setInputValue("f-tls-only-hidden", "true");
+          break;
+        case "last_15m": {
+          const now = new Date();
+          const before = new Date(now.getTime() - 15 * 60 * 1000);
+          $("time-from").value = toLocalInputValue(before);
+          $("time-to").value = toLocalInputValue(now);
+          break;
+        }
+        case "clear":
+          clearHelpdeskShortcutFilters();
+          activeSearchFocusLabel = "";
+          break;
+        default:
+          return;
+      }
+      applySearchQuickFilterState();
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+    }
+
+    async function changeSearchPage(delta) {
+      const nextPage = searchPage + delta;
+      if (delta < 0 && searchPage <= 1) return;
+      if (delta > 0 && !searchHasMore) return;
+      searchPage = nextPage;
+      try {
+        await runSearch();
+      } catch (err) {
+        searchPage -= delta;
+        updateSearchPaginationMeta();
+        throw err;
+      }
     }
 
     async function runSupportSummary(searchReq) {
@@ -4157,7 +5206,75 @@
       }
     }
 
+    function setTriageLoading() {
+      const host = $("triage-cards");
+      host.innerHTML = `<div class="muted">Refreshing root-cause triage for the active investigation window...</div>`;
+    }
+
+    function renderTriageCards(triage) {
+      const host = $("triage-cards");
+      host.innerHTML = "";
+      const buckets = Array.isArray(triage?.root_cause_buckets) ? triage.root_cause_buckets : [];
+      const auxiliary = [];
+      if (Array.isArray(triage?.top_users) && triage.top_users.length > 0) {
+        auxiliary.push({
+          id: "top_users",
+          title: "Top Affected Users",
+          severity: "medium",
+          summary: `Top affected user: ${triage.top_users[0].value} (${Number(triage.top_users[0].count || 0).toLocaleString()})`,
+          count: triage.top_users.reduce((sum, item) => sum + Number(item.count || 0), 0),
+          filters: { user: triage.top_users[0].value || "" },
+          example_values: triage.top_users.slice(0, 3).map((item) => String(item.value || "")),
+        });
+      }
+      if (Array.isArray(triage?.top_destinations) && triage.top_destinations.length > 0) {
+        auxiliary.push({
+          id: "top_destinations",
+          title: "Top Destinations",
+          severity: "low",
+          summary: `Most active destination: ${triage.top_destinations[0].value} (${Number(triage.top_destinations[0].count || 0).toLocaleString()})`,
+          count: triage.top_destinations.reduce((sum, item) => sum + Number(item.count || 0), 0),
+          filters: { server_ip: triage.top_destinations[0].value || "" },
+          example_values: triage.top_destinations.slice(0, 3).map((item) => String(item.value || "")),
+        });
+      }
+      const cards = buckets.concat(auxiliary).slice(0, 8);
+      if (cards.length === 0) {
+        host.innerHTML = `<div class="muted">No root-cause cards were generated for the current window.</div>`;
+        return;
+      }
+      for (const bucket of cards) {
+        const card = document.createElement("div");
+        card.className = "triage-card";
+        card.dataset.severity = String(bucket.severity || "info").toLowerCase();
+        const examples = Array.isArray(bucket.example_values) ? bucket.example_values.filter(Boolean).slice(0, 4) : [];
+        card.innerHTML = `
+          <div class="triage-card-top">
+            <div class="triage-card-title">${escapeHtml(bucket.title || "Triage Signal")}</div>
+            <span class="badge-${escapeHtml(String(bucket.severity || "info").toLowerCase())}">${escapeHtml(String(bucket.severity || "info").toUpperCase())}</span>
+          </div>
+          <div class="triage-card-summary">${escapeHtml(bucket.summary || "No summary available.")}</div>
+          <div class="triage-card-values">${examples.map((value) => `<span class="triage-pill" title="${escapeHtml(value)}">${escapeHtml(value)}</span>`).join("")}</div>
+          <div class="triage-card-action">
+            <span class="triage-card-count">${Number(bucket.count || 0).toLocaleString()} matching rows</span>
+            <button type="button" class="ghost">Focus</button>
+          </div>
+        `;
+        card.querySelector("button")?.addEventListener("click", async () => {
+          try {
+            await applyTriageBucket(bucket);
+          } catch (err) {
+            setMessage("search-msg", err.message || "Failed to apply triage focus.");
+          }
+        });
+        host.appendChild(card);
+      }
+    }
+
     function renderSearchInsightsFromTriage(triage) {
+      latestSearchTriage = triage;
+      renderIssueStrip(latestSupportSummary, triage);
+      renderTriageCards(triage);
       const reasons = Array.isArray(triage?.top_reasons) ? triage.top_reasons : [];
       const codes = Array.isArray(triage?.top_response_codes) ? triage.top_response_codes : [];
       const zero = Array.isArray(triage?.zero_response_destinations)
@@ -4198,10 +5315,19 @@
       );
     }
 
+    function setTimelineLoading() {
+      $("timeline-meta").textContent = "Refreshing storyboard timeline...";
+      $("timeline-chart").innerHTML = "<div class='timeline-empty'>Rebuilding timeline buckets and incident markers...</div>";
+      $("timeline-selection").textContent = "No active bucket selection.";
+      $("timeline-marker-list").innerHTML = "<div class='muted'>Refreshing timeline markers...</div>";
+      resetTimelineBrush();
+    }
+
     function resetTimelineBrush() {
       const start = $("timeline-brush-start");
       const end = $("timeline-brush-end");
       const apply = $("timeline-apply");
+      const reset = $("timeline-reset");
       start.min = "0";
       start.max = "0";
       start.value = "0";
@@ -4211,16 +5337,24 @@
       end.value = "0";
       end.disabled = true;
       apply.disabled = true;
+      if (reset) {
+        reset.disabled = !Boolean(activeInvestigation && activeInvestigation.workspace);
+      }
     }
 
     function renderSearchTimeline(payload) {
       const chartHost = $("timeline-chart");
       const metaHost = $("timeline-meta");
+      const selectionHost = $("timeline-selection");
+      const markerHost = $("timeline-marker-list");
       latestTimelinePoints = Array.isArray(payload?.points) ? payload.points : [];
+      latestTimelineMarkers = Array.isArray(payload?.markers) ? payload.markers : [];
       chartHost.innerHTML = "";
       if (!payload || !Array.isArray(payload.points) || payload.points.length === 0) {
         metaHost.textContent = "Run a search to render timeline buckets.";
         chartHost.innerHTML = "<div class='timeline-empty'>Run a search to render timeline buckets.</div>";
+        selectionHost.textContent = "No active bucket selection.";
+        markerHost.innerHTML = "<div class='muted'>No markers in the current search window.</div>";
         resetTimelineBrush();
         return;
       }
@@ -4246,16 +5380,54 @@
           const blockedH = count > 0 ? Math.max(0, Math.round((blocked / count) * barH)) : 0;
           const blockedY = y + (barH - blockedH);
           const title = `${p.bucket_start} | events=${count} | blocked=${blocked}`;
-          return `<g><title>${escapeHtml(title)}</title><rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${barH}" fill="#66aeea" opacity="0.78"></rect>${blockedH > 0 ? `<rect x="${x.toFixed(1)}" y="${blockedY}" width="${w.toFixed(1)}" height="${blockedH}" fill="#1f78d8" opacity="0.92"></rect>` : ""}</g>`;
+          return `<g class="timeline-bar" data-bucket-index="${idx}" tabindex="0" role="button" aria-label="${escapeHtml(title)}"><title>${escapeHtml(title)}</title><rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${barH}" fill="#66aeea" opacity="0.78"></rect>${blockedH > 0 ? `<rect x="${x.toFixed(1)}" y="${blockedY}" width="${w.toFixed(1)}" height="${blockedH}" fill="#1f78d8" opacity="0.92"></rect>` : ""}</g>`;
+        })
+        .join("");
+      const markerDots = latestTimelineMarkers
+        .map((marker, idx) => {
+          const bucketIndex = points.findIndex((point) => String(point.bucket_start) === String(marker.bucket_start));
+          if (bucketIndex < 0) return "";
+          const cx = padLeft + bucketIndex * barW + barW * 0.5;
+          const cy = marker.severity === "critical" ? padTop + 10 : marker.severity === "high" ? padTop + 24 : padTop + 38;
+          const fill = marker.severity === "critical" ? "#c0384b" : marker.severity === "high" ? "#b7791f" : "#1f78d8";
+          return `<circle class="timeline-marker-dot" data-marker-index="${idx}" cx="${cx.toFixed(1)}" cy="${cy}" r="5.5" fill="${fill}" stroke="rgba(255,255,255,0.92)" stroke-width="2"><title>${escapeHtml(marker.label || marker.summary || "timeline marker")}</title></circle>`;
         })
         .join("");
       const axis = `<line x1="${padLeft}" y1="${padTop + innerH}" x2="${width - padRight}" y2="${padTop + innerH}" stroke="#9db8d8" stroke-width="1"/>`;
-      chartHost.innerHTML = `<svg class="timeline-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Search timeline">${axis}${bars}</svg>`;
-      metaHost.textContent = `Bucket: ${payload.bucket_minutes}m | points: ${points.length} | events: ${points.reduce((a, b) => a + Number(b.count || 0), 0).toLocaleString()}`;
+      chartHost.innerHTML = `<svg class="timeline-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Search timeline">${axis}${bars}${markerDots}</svg>`;
+      metaHost.textContent = `Bucket: ${payload.bucket_minutes}m | points: ${points.length} | events: ${points.reduce((a, b) => a + Number(b.count || 0), 0).toLocaleString()} | markers: ${latestTimelineMarkers.length}`;
+      const originalWindowText = activeInvestigation?.workspace?.original_time_from && activeInvestigation?.workspace?.original_time_to
+        ? `${escapeHtml(formatDashboardTimestamp(activeInvestigation.workspace.original_time_from))} -> ${escapeHtml(formatDashboardTimestamp(activeInvestigation.workspace.original_time_to))}`
+        : "No investigation session loaded";
+      selectionHost.innerHTML = `
+        <span class="timeline-selection-chip">Current search window: ${escapeHtml(formatDashboardTimestamp($("time-from").value ? new Date($("time-from").value) : null))} -> ${escapeHtml(formatDashboardTimestamp($("time-to").value ? new Date($("time-to").value) : null))}</span>
+        <span>Original investigation window: ${originalWindowText}</span>
+      `;
+
+      markerHost.innerHTML = "";
+      if (latestTimelineMarkers.length === 0) {
+        markerHost.innerHTML = "<div class='muted'>No incident markers were derived from the current window.</div>";
+      } else {
+        latestTimelineMarkers.slice(0, 12).forEach((marker, idx) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "timeline-marker-chip";
+          button.innerHTML = `<span class="badge-${escapeHtml(String(marker.severity || "info").toLowerCase())}">${escapeHtml(String(marker.severity || "info").toUpperCase())}</span><span>${escapeHtml(marker.label || marker.summary || `Marker ${idx + 1}`)}</span>`;
+          button.addEventListener("click", async () => {
+            try {
+              await focusTimelineMarker(marker);
+            } catch (err) {
+              setMessage("search-msg", err.message || "Failed to focus timeline marker.");
+            }
+          });
+          markerHost.appendChild(button);
+        });
+      }
 
       const start = $("timeline-brush-start");
       const end = $("timeline-brush-end");
       const apply = $("timeline-apply");
+      const reset = $("timeline-reset");
       start.min = "0";
       start.max = String(points.length - 1);
       start.value = "0";
@@ -4265,6 +5437,32 @@
       end.value = String(points.length - 1);
       end.disabled = false;
       apply.disabled = false;
+      if (reset) {
+        reset.disabled = !Boolean(activeInvestigation && activeInvestigation.workspace);
+      }
+
+      chartHost.querySelectorAll("[data-bucket-index]").forEach((el) => {
+        const idx = Number.parseInt(el.getAttribute("data-bucket-index") || "-1", 10);
+        if (!Number.isFinite(idx) || idx < 0) return;
+        el.addEventListener("click", async () => {
+          try {
+            await focusTimelineBucket(idx);
+          } catch (err) {
+            setMessage("search-msg", err.message || "Failed to focus timeline bucket.");
+          }
+        });
+      });
+      chartHost.querySelectorAll("[data-marker-index]").forEach((el) => {
+        const idx = Number.parseInt(el.getAttribute("data-marker-index") || "-1", 10);
+        if (!Number.isFinite(idx) || idx < 0 || idx >= latestTimelineMarkers.length) return;
+        el.addEventListener("click", async () => {
+          try {
+            await focusTimelineMarker(latestTimelineMarkers[idx]);
+          } catch (err) {
+            setMessage("search-msg", err.message || "Failed to focus timeline marker.");
+          }
+        });
+      });
     }
 
     function normalizeTimelineBrush() {
@@ -4304,6 +5502,42 @@
       searchPage = 1;
       await runSearch({ resetPage: true });
       setMessage("search-msg", "Timeline brush applied to search window.", true);
+    }
+
+    async function focusTimelineBucket(index) {
+      const point = Array.isArray(latestTimelinePoints) ? latestTimelinePoints[index] : null;
+      if (!point) {
+        throw new Error("Timeline bucket is unavailable.");
+      }
+      const from = new Date(point.bucket_start);
+      const to = new Date(point.bucket_end || point.bucket_start);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        throw new Error("Timeline bucket has invalid timestamps.");
+      }
+      $("time-from").value = toLocalInputValue(from);
+      $("time-to").value = toLocalInputValue(to);
+      activeSearchFocusLabel = `Timeline bucket ${formatDashboardTimestamp(point.bucket_start)} -> ${formatDashboardTimestamp(point.bucket_end)}`;
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("search-msg", "Timeline bucket applied to the investigation window.", true);
+    }
+
+    async function focusTimelineMarker(marker) {
+      if (!marker) {
+        throw new Error("Timeline marker is unavailable.");
+      }
+      const from = new Date(marker.bucket_start || marker.at);
+      const to = new Date(marker.bucket_end || marker.at);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        throw new Error("Timeline marker has invalid timestamps.");
+      }
+      $("time-from").value = toLocalInputValue(from);
+      $("time-to").value = toLocalInputValue(to);
+      applySearchFiltersToForm(marker.filters || {}, { merge: true });
+      activeSearchFocusLabel = String(marker.label || marker.summary || "timeline marker").trim();
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("search-msg", "Timeline marker focused in the investigation workspace.", true);
     }
 
     function renderSearchInsights(rows) {
@@ -4511,11 +5745,107 @@
       }
     }
 
+    function responseCodeMeaning(codeRaw) {
+      const code = String(codeRaw || "").trim();
+      if (code === "200") return "Success path: request completed and the service returned content.";
+      if (code === "204") return "No content returned: common for preflight, telemetry, or API acknowledgement flows.";
+      if (code === "301" || code === "302") return "Redirect path: validate whether the redirect destination is expected.";
+      if (code === "403") return "Forbidden/block event: commonly policy enforcement or SSL/TLS block path.";
+      if (code === "404") return "Destination replied not found: likely server/application-side, not a ZIA policy block.";
+      if (code === "407") return "Proxy authentication path: commonly remote-user auth challenge behavior.";
+      if (code === "500" || code === "502" || code === "503" || code === "504") {
+        return "Server-side or upstream failure path: validate destination health, path reachability, and infra dependencies.";
+      }
+      return "Review this response code together with action, reason, and destination context.";
+    }
+
+    function firstRowValue(row, keys) {
+      if (!row || typeof row !== "object") return "";
+      for (const key of keys) {
+        if (!Object.prototype.hasOwnProperty.call(row, key)) continue;
+        const value = String(row[key] == null ? "" : row[key]).trim();
+        if (value.length > 0) return value;
+      }
+      return "";
+    }
+
+    function resetRowExplainer(message = "Select a row to see helpdesk-focused details.") {
+      const host = $("row-explainer");
+      host.classList.add("muted");
+      host.textContent = message;
+    }
+
+    function renderRowExplainer(row) {
+      const host = $("row-explainer");
+      if (!row || typeof row !== "object") {
+        resetRowExplainer();
+        return;
+      }
+      host.classList.remove("muted");
+      const action = firstRowValue(row, ["action"]);
+      const reason = firstRowValue(row, ["reason"]);
+      const responseCode = firstRowValue(row, ["respcode", "response_code"]);
+      const destination = firstRowValue(row, ["sip", "server_ip", "host", "url"]);
+      const user = firstRowValue(row, ["login", "user"]);
+      const device = firstRowValue(row, ["devicehostname", "deviceowner", "device"]);
+      const url = firstRowValue(row, ["url"]);
+      const time = firstRowValue(row, ["time"]);
+      const size = firstRowValue(row, ["respsize"]);
+      const reasonInfo = reasonHintFromPolicyReason(reason);
+      host.innerHTML = `
+        <div class="row-explainer-title">Selected Row Explainer</div>
+        <div class="row-explainer-grid">
+          <div class="row-explainer-item"><div class="row-explainer-label">Time</div><div class="row-explainer-value">${escapeHtml(time || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">Action</div><div class="row-explainer-value">${escapeHtml(action || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">Reason</div><div class="row-explainer-value">${escapeHtml(reason || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">Response Code</div><div class="row-explainer-value">${escapeHtml(responseCode || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">Destination</div><div class="row-explainer-value">${escapeHtml(destination || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">User</div><div class="row-explainer-value">${escapeHtml(user || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">Device</div><div class="row-explainer-value">${escapeHtml(device || "n/a")}</div></div>
+          <div class="row-explainer-item"><div class="row-explainer-label">Response Size</div><div class="row-explainer-value">${escapeHtml(size || "n/a")}</div></div>
+        </div>
+        <div class="row-explainer-hint">
+          <strong>${escapeHtml(reasonInfo.severity.toUpperCase())}</strong> • ${escapeHtml(reasonInfo.hint)}
+          <br><br>
+          <strong>Response Code Meaning:</strong> ${escapeHtml(responseCodeMeaning(responseCode))}
+          ${url ? `<br><br><strong>URL:</strong> ${escapeHtml(url)}` : ""}
+        </div>
+        <div class="row-explainer-actions">
+          <button id="row-explainer-pin" type="button" class="ghost">Pin Selected Row</button>
+          <button id="row-explainer-export" type="button" class="ghost">Export Incident Report</button>
+          <button id="row-explainer-show" type="button" class="ghost">Show Matching Rows</button>
+        </div>
+      `;
+      $("row-explainer-pin")?.addEventListener("click", async () => {
+        try {
+          await pinEvidenceRow(row);
+        } catch (err) {
+          setMessage("evidence-msg", err.message || "Failed to pin selected row.");
+        }
+      });
+      $("row-explainer-export")?.addEventListener("click", async () => {
+        try {
+          await exportPdfSummary();
+        } catch (err) {
+          setMessage("search-msg", err.message || "Failed to export incident report.");
+        }
+      });
+      $("row-explainer-show")?.addEventListener("click", () => {
+        showSearchResultsWorkspace();
+      });
+    }
+
     function isPivotableColumn(columnName) {
       return PIVOTABLE_FIELDS.has(String(columnName || "").toLowerCase());
     }
 
-    function buildSearchResultsTable(columns, rows) {
+    function updateGroupedDrilldownAvailability(viewMode = currentSearchViewMode()) {
+      const button = $("grouped-drilldown");
+      if (!button) return;
+      button.disabled = viewMode === "raw" || !selectedSearchRow;
+    }
+
+    function buildSearchResultsTable(columns, rows, viewMode) {
       const table = document.createElement("table");
       table.classList.add("results-table");
       const stickyColumns = new Set(["__actions", "time", "action"]);
@@ -4555,6 +5885,8 @@
             other.classList.remove("selected-row");
           }
           tr.classList.add("selected-row");
+          updateGroupedDrilldownAvailability(viewMode);
+          renderRowExplainer(row);
         });
 
         const actionTd = document.createElement("td");
@@ -4572,6 +5904,20 @@
           }
         });
         actionTd.appendChild(pinBtn);
+        if (viewMode !== "raw") {
+          const drillBtn = document.createElement("button");
+          drillBtn.type = "button";
+          drillBtn.className = "row-action-btn";
+          drillBtn.textContent = "Drill";
+          drillBtn.addEventListener("click", async () => {
+            try {
+              await drillDownGroupedRow(row);
+            } catch (err) {
+              setMessage("search-msg", err.message || "Failed to drill into grouped row.");
+            }
+          });
+          actionTd.appendChild(drillBtn);
+        }
         tr.appendChild(actionTd);
 
         for (const [idx, col] of columns.entries()) {
@@ -4617,6 +5963,7 @@
       latestSearchRowsData = Array.isArray(rows) ? rows : [];
       selectedSearchRow = null;
       selectedSearchRowIndex = -1;
+      updateGroupedDrilldownAvailability(viewMode);
       searchPage = Number(result.page || searchPage || 1);
       searchPageSize = Number(result.page_size || searchPageSize || 200);
       searchHasMore = Boolean(result.has_more);
@@ -4644,12 +5991,14 @@
         host.innerHTML = "<div class='muted' style='padding:10px;'>No rows returned.</div>";
         renderSearchResultTables([]);
         renderEvidenceBasket();
+        resetRowExplainer("No rows returned for the current search.");
         if (renderToken === latestSearchRenderToken) {
           renderSearchInsights([]);
           void renderSearchFlowMap([]);
           if (typeof renderSearchSankey === "function") {
             renderSearchSankey([]);
           }
+          $("triage-cards").innerHTML = "<div class='muted'>No triage cards available because the current search returned no rows.</div>";
           resetSupportSummary("No rows returned for the current search.");
         }
         return;
@@ -4664,7 +6013,8 @@
           columns = [...preferred, ...remaining];
         }
       }
-      host.appendChild(buildSearchResultsTable(columns, rows));
+      host.appendChild(buildSearchResultsTable(columns, rows, viewMode));
+      resetRowExplainer("Select a row to see helpdesk-focused details.");
       renderSearchResultTables(rows);
       renderEvidenceBasket();
       if (renderToken === latestSearchRenderToken) {
@@ -5139,6 +6489,7 @@
       resetSupportSummary();
       resetTimelineBrush();
       updateSearchPaginationMeta();
+      updateGroupedDrilldownAvailability("raw");
       renderInvestigationMeta();
       renderPivotChips();
       renderEvidenceBasket();
@@ -5261,6 +6612,42 @@
           setMessage("pcap-msg", err.message || "PCAP analysis failed.");
         }
       });
+      $("workspace-summary").addEventListener("click", () => setSearchWorkspaceMode("summary"));
+      $("workspace-results").addEventListener("click", () => setSearchWorkspaceMode("results"));
+      $("support-show-rows").addEventListener("click", () => {
+        showSearchResultsWorkspace();
+        focusResultsPanel();
+      });
+      $("support-reset-window").addEventListener("click", async () => {
+        try {
+          await resetInvestigationWindow();
+        } catch (err) {
+          setMessage("support-summary-msg", err.message || "Failed to reset time window.");
+        }
+      });
+      $("column-preset").addEventListener("change", () => {
+        applyColumnPreset($("column-preset").value, { syncSelect: true });
+      });
+      $("columns").addEventListener("input", () => {
+        syncColumnPresetSelection();
+      });
+      const quickFilterActions = {
+        "qa-blocked-only": "blocked_only",
+        "qa-403-407": "403_407",
+        "qa-zero-response": "zero_response",
+        "qa-tls-issues": "tls_issues",
+        "qa-last-15m": "last_15m",
+        "qa-clear": "clear",
+      };
+      for (const [id, action] of Object.entries(quickFilterActions)) {
+        $(id).addEventListener("click", async () => {
+          try {
+            await runQuickFilterAction(action);
+          } catch (err) {
+            setMessage("search-msg", err.message || "Failed to apply quick filter.");
+          }
+        });
+      }
       $("search-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         try { await runSearch({ resetPage: true }); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
@@ -5302,6 +6689,13 @@
           setMessage("investigation-msg", err.message || "Failed to load investigation session.");
         }
       });
+      $("investigation-reset-window").addEventListener("click", async () => {
+        try {
+          await resetInvestigationWindow();
+        } catch (err) {
+          setMessage("investigation-msg", err.message || "Failed to reset investigation window.");
+        }
+      });
       $("investigation-export").addEventListener("click", async () => {
         try {
           await exportInvestigationPackage();
@@ -5310,24 +6704,30 @@
         }
       });
       $("search-prev").addEventListener("click", async () => {
-        if (searchPage <= 1) return;
-        searchPage -= 1;
         try {
-          await runSearch();
+          await changeSearchPage(-1);
         } catch (err) {
-          searchPage += 1;
-          updateSearchPaginationMeta();
           setMessage("search-msg", err.message || "Search page failed");
         }
       });
       $("search-next").addEventListener("click", async () => {
-        if (!searchHasMore) return;
-        searchPage += 1;
         try {
-          await runSearch();
+          await changeSearchPage(1);
         } catch (err) {
-          searchPage -= 1;
-          updateSearchPaginationMeta();
+          setMessage("search-msg", err.message || "Search page failed");
+        }
+      });
+      $("search-prev-bottom").addEventListener("click", async () => {
+        try {
+          await changeSearchPage(-1);
+        } catch (err) {
+          setMessage("search-msg", err.message || "Search page failed");
+        }
+      });
+      $("search-next-bottom").addEventListener("click", async () => {
+        try {
+          await changeSearchPage(1);
+        } catch (err) {
           setMessage("search-msg", err.message || "Search page failed");
         }
       });
@@ -5338,6 +6738,20 @@
           await applyTimelineBrushToSearch();
         } catch (err) {
           setMessage("search-msg", err.message || "Failed to apply timeline brush.");
+        }
+      });
+      $("timeline-reset").addEventListener("click", async () => {
+        try {
+          await resetInvestigationWindow();
+        } catch (err) {
+          setMessage("search-msg", err.message || "Failed to reset timeline window.");
+        }
+      });
+      $("grouped-drilldown").addEventListener("click", async () => {
+        try {
+          await drillDownGroupedRow(selectedSearchRow);
+        } catch (err) {
+          setMessage("search-msg", err.message || "Failed to drill into grouped selection.");
         }
       });
       $("export-csv").addEventListener("click", async () => {
@@ -5380,6 +6794,8 @@
 
       const isAuthed = await checkSession();
       renderUserState();
+      setSearchWorkspaceMode(preferredSearchWorkspaceMode());
+      ensureSearchColumnsInitialized();
       showApp(isAuthed);
       setView("main");
       if (isAuthed) {

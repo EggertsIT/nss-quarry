@@ -14,8 +14,9 @@ use tracing::{error, warn};
 use crate::config::{AppConfig, FieldMap, RoleName};
 use crate::models::{
     DashboardResponse, DashboardStatus, MetricCard, SearchFilters, SearchGroupedResponse,
-    SearchRequest, SearchResponse, SearchTimelinePoint, SearchTimelineResponse,
-    SearchTriageResponse, SearchViewMode, SupportSummaryItem, TableBlock,
+    SearchRequest, SearchResponse, SearchTimelineMarker, SearchTimelinePoint,
+    SearchTimelineResponse, SearchTriageBucket, SearchTriageResponse, SearchViewMode,
+    SupportSummaryItem, TableBlock,
 };
 
 const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
@@ -112,6 +113,20 @@ struct QueryInner {
     default_limit: u32,
     max_rows: u32,
     timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TimelineBucketAggregate {
+    total: usize,
+    blocked: usize,
+    policy: usize,
+    ssl_tls: usize,
+    zero_response: usize,
+    geo: usize,
+    threat: usize,
+    reason_counts: HashMap<String, usize>,
+    destination_counts: HashMap<String, usize>,
+    threat_counts: HashMap<String, usize>,
 }
 
 impl QueryService {
@@ -983,10 +998,25 @@ impl QueryService {
             self.inner.fields.time_field.clone(),
             self.inner.fields.action_field.clone(),
         ];
-        let rows = self.search_rows_for_analysis(req.clone(), role, &required, &[])?;
+        let optional = vec![
+            self.inner.fields.reason_field.clone(),
+            self.inner.fields.response_code_field.clone(),
+            self.inner.fields.server_ip_field.clone(),
+            self.inner.fields.threat_field.clone(),
+            self.inner.fields.user_field.clone(),
+            "respsize".to_string(),
+            "externalspr".to_string(),
+            "cltsslfailreason".to_string(),
+            "is_ssluntrustedca".to_string(),
+            "is_sslselfsigned".to_string(),
+            "is_sslexpiredca".to_string(),
+            "clienttlsversion".to_string(),
+            "srvtlsversion".to_string(),
+        ];
+        let rows = self.search_rows_for_analysis(req.clone(), role, &required, &optional)?;
         let bucket_minutes = normalize_bucket_minutes(req.time_from, req.time_to, bucket_minutes);
         let step_secs = i64::from(bucket_minutes) * 60;
-        let mut buckets: BTreeMap<i64, (usize, usize)> = BTreeMap::new();
+        let mut buckets: BTreeMap<i64, TimelineBucketAggregate> = BTreeMap::new();
 
         for row in &rows {
             let Some(event_time) =
@@ -998,26 +1028,55 @@ impl QueryService {
                 continue;
             }
             let bucket = align_to_bucket_start(event_time, step_secs);
-            let entry = buckets.entry(bucket.timestamp()).or_insert((0, 0));
-            entry.0 += 1;
+            let entry = buckets.entry(bucket.timestamp()).or_default();
+            entry.total += 1;
             let action = row_get_str(row, &self.inner.fields.action_field).unwrap_or_default();
             if action.eq_ignore_ascii_case("blocked") {
-                entry.1 += 1;
+                entry.blocked += 1;
+                entry.policy += 1;
+            }
+            let reason = normalized_row_value(row, &self.inner.fields.reason_field);
+            if reason != "None" {
+                increment_count(&mut entry.reason_counts, &reason);
+            }
+            let destination = normalized_row_value(row, &self.inner.fields.server_ip_field);
+            if destination != "None" {
+                increment_count(&mut entry.destination_counts, &destination);
+            }
+            let threat = normalized_row_value(row, &self.inner.fields.threat_field);
+            if threat != "None" {
+                entry.threat += 1;
+                increment_count(&mut entry.threat_counts, &threat);
+            }
+            if row_respsize_zero(row) {
+                entry.zero_response += 1;
+            }
+            if row_is_tls_issue(row, &self.inner.fields) {
+                entry.ssl_tls += 1;
+            }
+            if row_is_geo_issue(row, &self.inner.fields) {
+                entry.geo += 1;
             }
         }
 
         let mut points = Vec::new();
+        let mut markers = Vec::new();
         let mut cursor = align_to_bucket_start(req.time_from, step_secs);
         while cursor < req.time_to {
             let key = cursor.timestamp();
-            let (count, blocked) = buckets.get(&key).copied().unwrap_or((0, 0));
+            let bucket_state = buckets.get(&key).cloned().unwrap_or_default();
             let bucket_end = cursor + ChronoDuration::seconds(step_secs);
             points.push(SearchTimelinePoint {
                 bucket_start: cursor,
                 bucket_end,
-                count,
-                blocked,
+                count: bucket_state.total,
+                blocked: bucket_state.blocked,
             });
+            if let Some(marker) =
+                timeline_marker_from_bucket(&bucket_state, cursor, bucket_end, &self.inner.fields)
+            {
+                markers.push(marker);
+            }
             cursor = bucket_end;
         }
 
@@ -1025,6 +1084,7 @@ impl QueryService {
             generated_at: Utc::now(),
             bucket_minutes,
             points,
+            markers,
         })
     }
 
@@ -1048,62 +1108,125 @@ impl QueryService {
             "clienttlsversion".to_string(),
             "srvtlsversion".to_string(),
             "ssl_rulename".to_string(),
+            self.inner.fields.user_field.clone(),
+            self.inner.fields.threat_field.clone(),
+            self.inner
+                .fields
+                .destination_country_field
+                .clone()
+                .unwrap_or_else(|| "dstip_country".to_string()),
         ];
         let rows = self.search_rows_for_analysis(req, role, &required, &optional)?;
 
         let mut reason_counts: HashMap<String, usize> = HashMap::new();
         let mut code_counts: HashMap<String, usize> = HashMap::new();
         let mut destination_counts: HashMap<String, usize> = HashMap::new();
+        let mut user_counts: HashMap<String, usize> = HashMap::new();
         let mut zero_destination_counts: HashMap<String, usize> = HashMap::new();
         let mut tls_counts: HashMap<String, usize> = HashMap::new();
+        let mut policy_reason_counts: HashMap<String, usize> = HashMap::new();
+        let mut ssl_reason_counts: HashMap<String, usize> = HashMap::new();
+        let mut geo_reason_counts: HashMap<String, usize> = HashMap::new();
+        let mut geo_destination_counts: HashMap<String, usize> = HashMap::new();
+        let mut threat_reason_counts: HashMap<String, usize> = HashMap::new();
+        let mut threat_name_counts: HashMap<String, usize> = HashMap::new();
+        let mut zero_reason_counts: HashMap<String, usize> = HashMap::new();
+        let mut policy_bucket_count = 0usize;
+        let mut ssl_bucket_count = 0usize;
+        let mut geo_bucket_count = 0usize;
+        let mut threat_bucket_count = 0usize;
+        let mut zero_bucket_count = 0usize;
 
         for row in &rows {
             let reason = normalized_row_value(row, &self.inner.fields.reason_field);
-            *reason_counts.entry(reason).or_insert(0) += 1;
+            *reason_counts.entry(reason.clone()).or_insert(0) += 1;
 
             let code = normalized_row_value(row, &self.inner.fields.response_code_field);
             *code_counts.entry(code).or_insert(0) += 1;
 
             let destination = normalized_row_value(row, &self.inner.fields.server_ip_field);
             *destination_counts.entry(destination.clone()).or_insert(0) += 1;
-
-            if row
-                .get("respsize")
-                .and_then(|v| v.as_str())
-                .and_then(|v| v.parse::<i64>().ok())
-                == Some(0)
-            {
-                *zero_destination_counts.entry(destination).or_insert(0) += 1;
+            let user = normalized_row_value(row, &self.inner.fields.user_field);
+            if user != "None" {
+                *user_counts.entry(user).or_insert(0) += 1;
             }
 
-            for tls_col in [
-                "externalspr",
-                "cltsslfailreason",
-                "is_ssluntrustedca",
-                "is_sslselfsigned",
-                "is_sslexpiredca",
-                "clienttlsversion",
-                "srvtlsversion",
-                "ssl_rulename",
-            ] {
-                let value = row
-                    .get(tls_col)
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .unwrap_or("");
-                if value.is_empty() || value.eq_ignore_ascii_case("none") || value == "N/A" {
-                    continue;
+            if row_respsize_zero(row) {
+                zero_bucket_count += 1;
+                *zero_destination_counts.entry(destination).or_insert(0) += 1;
+                if reason != "None" {
+                    *zero_reason_counts.entry(reason.clone()).or_insert(0) += 1;
                 }
-                let key = format!("{tls_col}={value}");
+            }
+
+            for indicator in row_tls_indicators(row, &self.inner.fields) {
+                let key = indicator;
                 *tls_counts.entry(key).or_insert(0) += 1;
+            }
+            if row_is_policy_issue(row, &self.inner.fields) {
+                policy_bucket_count += 1;
+                if reason != "None" {
+                    *policy_reason_counts.entry(reason.clone()).or_insert(0) += 1;
+                }
+            }
+            if row_is_tls_issue(row, &self.inner.fields) {
+                ssl_bucket_count += 1;
+                if reason != "None" {
+                    *ssl_reason_counts.entry(reason.clone()).or_insert(0) += 1;
+                }
+            }
+            if row_is_geo_issue(row, &self.inner.fields) {
+                geo_bucket_count += 1;
+                if reason != "None" {
+                    *geo_reason_counts.entry(reason.clone()).or_insert(0) += 1;
+                }
+                if let Some(dst_country_col) =
+                    self.inner.fields.destination_country_field.as_deref()
+                {
+                    let destination_country = normalized_row_value(row, dst_country_col);
+                    if destination_country != "None" {
+                        *geo_destination_counts
+                            .entry(destination_country)
+                            .or_insert(0) += 1;
+                    }
+                }
+            }
+            if row_is_threat_issue(row, &self.inner.fields) {
+                threat_bucket_count += 1;
+                if reason != "None" {
+                    *threat_reason_counts.entry(reason.clone()).or_insert(0) += 1;
+                }
+                let threat_name = normalized_row_value(row, &self.inner.fields.threat_field);
+                if threat_name != "None" {
+                    *threat_name_counts.entry(threat_name).or_insert(0) += 1;
+                }
             }
         }
 
+        let root_cause_buckets = build_root_cause_buckets(
+            &policy_reason_counts,
+            &ssl_reason_counts,
+            &zero_destination_counts,
+            &zero_reason_counts,
+            &geo_reason_counts,
+            &geo_destination_counts,
+            &threat_reason_counts,
+            &threat_name_counts,
+            policy_bucket_count,
+            ssl_bucket_count,
+            zero_bucket_count,
+            geo_bucket_count,
+            threat_bucket_count,
+            &self.inner.fields,
+        );
+
         Ok(SearchTriageResponse {
             generated_at: Utc::now(),
+            root_cause_buckets,
             top_reasons: top_support_items(&reason_counts, 12),
             top_response_codes: top_support_items(&code_counts, 12),
             top_destinations: top_support_items(&destination_counts, 12),
+            top_users: top_support_items(&user_counts, 12),
             zero_response_destinations: top_support_items(&zero_destination_counts, 12),
             tls_or_ssl_indicators: top_support_items(&tls_counts, 12),
         })
@@ -1623,6 +1746,26 @@ fn apply_contains_or_multi_exact_filter(
     }
 }
 
+fn apply_tls_issue_filter(
+    where_clauses: &mut Vec<String>,
+    fields: &FieldMap,
+    enabled: Option<bool>,
+) {
+    if enabled != Some(true) {
+        return;
+    }
+    where_clauses.push(format!(
+        "(\
+        STRPOS(LOWER(CAST({reason_col} AS VARCHAR)), 'ssl') > 0 OR \
+        STRPOS(LOWER(CAST({reason_col} AS VARCHAR)), 'tls') > 0 OR \
+        STRPOS(LOWER(CAST({reason_col} AS VARCHAR)), 'certificate') > 0 OR \
+        STRPOS(LOWER(CAST({reason_col} AS VARCHAR)), 'ocsp') > 0 OR \
+        STRPOS(LOWER(CAST({reason_col} AS VARCHAR)), 'handshake') > 0\
+        )",
+        reason_col = ident(&fields.reason_field)
+    ));
+}
+
 fn build_search_sql(
     columns: &[String],
     req: &SearchRequest,
@@ -1670,6 +1813,11 @@ fn build_search_sql(
         &mut where_clauses,
         &fields.response_code_field,
         req.filters.response_code.as_deref(),
+    );
+    apply_contains_or_multi_exact_filter(
+        &mut where_clauses,
+        "respsize",
+        req.filters.response_size.as_deref(),
     );
     apply_filter(
         &mut where_clauses,
@@ -1720,6 +1868,7 @@ fn build_search_sql(
         &fields.department_field,
         req.filters.department.as_deref(),
     );
+    apply_tls_issue_filter(&mut where_clauses, fields, req.filters.tls_issue_only);
 
     let mut sql = format!(
         "SELECT {select_list} FROM {parquet_src} WHERE {} ORDER BY {time_col} DESC LIMIT {limit}",
@@ -1848,6 +1997,429 @@ fn top_support_items(counts: &HashMap<String, usize>, limit: usize) -> Vec<Suppo
             severity: None,
         })
         .collect()
+}
+
+fn increment_count(counts: &mut HashMap<String, usize>, value: &str) {
+    *counts.entry(value.to_string()).or_insert(0) += 1;
+}
+
+fn row_respsize_zero(row: &serde_json::Map<String, serde_json::Value>) -> bool {
+    row.get("respsize")
+        .and_then(|v| v.as_str())
+        .and_then(|v| v.parse::<i64>().ok())
+        == Some(0)
+}
+
+fn row_reason<'a>(
+    row: &'a serde_json::Map<String, serde_json::Value>,
+    fields: &FieldMap,
+) -> Option<&'a str> {
+    row_get_str(row, &fields.reason_field)
+}
+
+fn row_action<'a>(
+    row: &'a serde_json::Map<String, serde_json::Value>,
+    fields: &FieldMap,
+) -> Option<&'a str> {
+    row_get_str(row, &fields.action_field)
+}
+
+fn row_is_policy_issue(
+    row: &serde_json::Map<String, serde_json::Value>,
+    fields: &FieldMap,
+) -> bool {
+    let action = row_action(row, fields).unwrap_or_default();
+    if action.eq_ignore_ascii_case("blocked") {
+        return true;
+    }
+    let reason = row_reason(row, fields)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    reason.contains("not allowed")
+        || reason.contains("blocked")
+        || reason.contains("denylist")
+        || reason.contains("url filtering")
+}
+
+fn row_is_tls_issue(row: &serde_json::Map<String, serde_json::Value>, fields: &FieldMap) -> bool {
+    !row_tls_indicators(row, fields).is_empty()
+}
+
+fn row_tls_indicators(
+    row: &serde_json::Map<String, serde_json::Value>,
+    fields: &FieldMap,
+) -> Vec<String> {
+    let mut indicators = Vec::new();
+    let reason = row_reason(row, fields)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if reason.contains("ssl")
+        || reason.contains("tls")
+        || reason.contains("certificate")
+        || reason.contains("ocsp")
+        || reason.contains("handshake")
+    {
+        indicators.push("reason=tls_or_certificate".to_string());
+    }
+
+    if let Some(value) = row_get_str(row, "externalspr") {
+        let lower = value.to_ascii_lowercase();
+        if !matches!(
+            lower.as_str(),
+            "n/a" | "inspected" | "inspect all" | "none" | ""
+        ) {
+            indicators.push(format!("externalspr={value}"));
+        }
+    }
+    if let Some(value) = row_get_str(row, "cltsslfailreason") {
+        let lower = value.to_ascii_lowercase();
+        if !matches!(lower.as_str(), "n/a" | "none" | "") {
+            indicators.push(format!("cltsslfailreason={value}"));
+        }
+    }
+    if let Some(value) = row_get_str(row, "is_ssluntrustedca") {
+        let lower = value.to_ascii_lowercase();
+        if matches!(lower.as_str(), "fail" | "yes") {
+            indicators.push(format!("is_ssluntrustedca={value}"));
+        }
+    }
+    if let Some(value) = row_get_str(row, "is_sslselfsigned")
+        && value.eq_ignore_ascii_case("yes")
+    {
+        indicators.push(format!("is_sslselfsigned={value}"));
+    }
+    if let Some(value) = row_get_str(row, "is_sslexpiredca")
+        && value.eq_ignore_ascii_case("yes")
+    {
+        indicators.push(format!("is_sslexpiredca={value}"));
+    }
+    for col in ["clienttlsversion", "srvtlsversion"] {
+        if let Some(value) = row_get_str(row, col) {
+            let lower = value.to_ascii_lowercase();
+            if matches!(lower.as_str(), "ssl2" | "ssl3" | "tls1_1") {
+                indicators.push(format!("{col}={value}"));
+            }
+        }
+    }
+
+    indicators
+}
+
+fn row_is_geo_issue(row: &serde_json::Map<String, serde_json::Value>, fields: &FieldMap) -> bool {
+    let reason = row_reason(row, fields)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if reason.contains("country") || reason.contains("geo") {
+        return true;
+    }
+    false
+}
+
+fn row_is_threat_issue(
+    row: &serde_json::Map<String, serde_json::Value>,
+    fields: &FieldMap,
+) -> bool {
+    let reason = row_reason(row, fields)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if reason.contains("phishing")
+        || reason.contains("malware")
+        || reason.contains("botnet")
+        || reason.contains("spyware")
+        || reason.contains("reputation")
+        || reason.contains("ips block")
+    {
+        return true;
+    }
+    let threat = row_get_str(row, &fields.threat_field)
+        .unwrap_or_default()
+        .trim();
+    !threat.is_empty() && !threat.eq_ignore_ascii_case("none") && threat != "N/A"
+}
+
+fn top_count_entry(counts: &HashMap<String, usize>) -> Option<(String, usize)> {
+    counts
+        .iter()
+        .max_by(|a, b| a.1.cmp(b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(key, count)| (key.clone(), *count))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_root_cause_buckets(
+    policy_reason_counts: &HashMap<String, usize>,
+    ssl_reason_counts: &HashMap<String, usize>,
+    zero_destination_counts: &HashMap<String, usize>,
+    zero_reason_counts: &HashMap<String, usize>,
+    geo_reason_counts: &HashMap<String, usize>,
+    geo_destination_counts: &HashMap<String, usize>,
+    threat_reason_counts: &HashMap<String, usize>,
+    threat_name_counts: &HashMap<String, usize>,
+    policy_count: usize,
+    ssl_count: usize,
+    zero_count: usize,
+    geo_count: usize,
+    threat_count: usize,
+    fields: &FieldMap,
+) -> Vec<SearchTriageBucket> {
+    let mut buckets = Vec::new();
+    if policy_count > 0 {
+        let top_reason = top_count_entry(policy_reason_counts);
+        buckets.push(SearchTriageBucket {
+            id: "policy_block".to_string(),
+            title: "Policy Blocks".to_string(),
+            severity: "high".to_string(),
+            summary: match top_reason.as_ref() {
+                Some((reason, count)) => format!("Dominant block reason: {reason} ({count})"),
+                None => "Blocked activity is present in the current window.".to_string(),
+            },
+            count: policy_count,
+            filters: SearchFilters {
+                action: Some("Blocked".to_string()),
+                reason: top_reason.as_ref().map(|(reason, _)| reason.clone()),
+                ..SearchFilters::default()
+            },
+            example_values: top_support_items(policy_reason_counts, 3)
+                .into_iter()
+                .map(|item| item.value)
+                .collect(),
+        });
+    }
+    if ssl_count > 0 {
+        let top_reason = top_count_entry(ssl_reason_counts);
+        buckets.push(SearchTriageBucket {
+            id: "ssl_tls".to_string(),
+            title: "SSL/TLS Issues".to_string(),
+            severity: "high".to_string(),
+            summary: match top_reason.as_ref() {
+                Some((reason, count)) => format!("Dominant TLS signal: {reason} ({count})"),
+                None => "TLS, certificate, or handshake issues are present.".to_string(),
+            },
+            count: ssl_count,
+            filters: SearchFilters {
+                reason: top_reason.as_ref().map(|(reason, _)| reason.clone()),
+                ..SearchFilters::default()
+            },
+            example_values: top_support_items(ssl_reason_counts, 3)
+                .into_iter()
+                .map(|item| item.value)
+                .collect(),
+        });
+    }
+    if zero_count > 0 {
+        let top_destination = top_count_entry(zero_destination_counts);
+        buckets.push(SearchTriageBucket {
+            id: "zero_response".to_string(),
+            title: "Zero-Response Destinations".to_string(),
+            severity: "medium".to_string(),
+            summary: match top_destination.as_ref() {
+                Some((destination, count)) => {
+                    format!("Destination with respsize=0 leading signal: {destination} ({count})")
+                }
+                None => "Transactions with respsize=0 are present.".to_string(),
+            },
+            count: zero_count,
+            filters: SearchFilters {
+                server_ip: top_destination
+                    .as_ref()
+                    .map(|(destination, _)| destination.clone()),
+                reason: top_count_entry(zero_reason_counts).map(|(reason, _)| reason),
+                ..SearchFilters::default()
+            },
+            example_values: top_support_items(zero_destination_counts, 3)
+                .into_iter()
+                .map(|item| item.value)
+                .collect(),
+        });
+    }
+    if geo_count > 0 {
+        let top_geo_reason = top_count_entry(geo_reason_counts);
+        let top_geo_destination = top_count_entry(geo_destination_counts);
+        buckets.push(SearchTriageBucket {
+            id: "geo_issue".to_string(),
+            title: "Geo Issues".to_string(),
+            severity: "high".to_string(),
+            summary: match (top_geo_reason.as_ref(), top_geo_destination.as_ref()) {
+                (Some((reason, _)), Some((destination_country, _))) => {
+                    format!(
+                        "Geo signal led by {reason}; top destination country {destination_country}"
+                    )
+                }
+                (Some((reason, _)), None) => format!("Geo signal led by reason: {reason}"),
+                _ => "Country or geo-related policy signals are present.".to_string(),
+            },
+            count: geo_count,
+            filters: SearchFilters {
+                reason: top_geo_reason.as_ref().map(|(reason, _)| reason.clone()),
+                destination_country: top_geo_destination
+                    .as_ref()
+                    .map(|(destination_country, _)| destination_country.clone()),
+                ..SearchFilters::default()
+            },
+            example_values: top_support_items(geo_reason_counts, 3)
+                .into_iter()
+                .map(|item| item.value)
+                .collect(),
+        });
+    }
+    if threat_count > 0 {
+        let top_threat = top_count_entry(threat_name_counts);
+        let top_reason = top_count_entry(threat_reason_counts);
+        buckets.push(SearchTriageBucket {
+            id: "threat_reputation".to_string(),
+            title: "Threat / Reputation".to_string(),
+            severity: "critical".to_string(),
+            summary: match (top_threat.as_ref(), top_reason.as_ref()) {
+                (Some((threat, _)), Some((reason, _))) => {
+                    format!("Threat signal led by {threat}; dominant reason {reason}")
+                }
+                (Some((threat, _)), None) => format!("Threat signal led by {threat}"),
+                (None, Some((reason, _))) => format!("Threat signal led by {reason}"),
+                _ => "Threat or reputation-related traffic is present.".to_string(),
+            },
+            count: threat_count,
+            filters: SearchFilters {
+                threat: top_threat.as_ref().map(|(threat, _)| threat.clone()),
+                reason: top_reason.as_ref().map(|(reason, _)| reason.clone()),
+                ..SearchFilters::default()
+            },
+            example_values: top_support_items(threat_name_counts, 3)
+                .into_iter()
+                .map(|item| item.value)
+                .chain(
+                    top_support_items(threat_reason_counts, 2)
+                        .into_iter()
+                        .map(|item| item.value),
+                )
+                .collect(),
+        });
+    }
+    buckets.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.title.cmp(&b.title)));
+    let _ = fields;
+    buckets
+}
+
+fn timeline_marker_from_bucket(
+    bucket: &TimelineBucketAggregate,
+    bucket_start: DateTime<Utc>,
+    bucket_end: DateTime<Utc>,
+    fields: &FieldMap,
+) -> Option<SearchTimelineMarker> {
+    if bucket.total == 0 {
+        return None;
+    }
+    let dominant = [
+        (
+            "threat_reputation",
+            "Threat / Reputation",
+            "critical",
+            bucket.threat,
+        ),
+        ("ssl_tls", "SSL/TLS", "high", bucket.ssl_tls),
+        ("geo_issue", "Geo Issue", "high", bucket.geo),
+        (
+            "zero_response",
+            "Zero Response",
+            "medium",
+            bucket.zero_response,
+        ),
+        ("policy_block", "Policy Block", "medium", bucket.policy),
+    ]
+    .into_iter()
+    .max_by(|a, b| a.3.cmp(&b.3).then_with(|| a.0.cmp(b.0)))?;
+    if dominant.3 == 0 {
+        return None;
+    }
+
+    let (summary, filters) = match dominant.0 {
+        "threat_reputation" => {
+            let top_threat = top_count_entry(&bucket.threat_counts);
+            (
+                top_threat
+                    .as_ref()
+                    .map(|(threat, count)| {
+                        format!("{count} threat/reputation events led by {threat}")
+                    })
+                    .unwrap_or_else(|| {
+                        "Threat/reputation signals detected in this bucket.".to_string()
+                    }),
+                SearchFilters {
+                    threat: top_threat.map(|(threat, _)| threat),
+                    ..SearchFilters::default()
+                },
+            )
+        }
+        "ssl_tls" => {
+            let top_reason = top_count_entry(&bucket.reason_counts);
+            (
+                top_reason
+                    .as_ref()
+                    .map(|(reason, count)| format!("{count} SSL/TLS events led by {reason}"))
+                    .unwrap_or_else(|| "SSL/TLS signals detected in this bucket.".to_string()),
+                SearchFilters {
+                    reason: top_reason.map(|(reason, _)| reason),
+                    ..SearchFilters::default()
+                },
+            )
+        }
+        "geo_issue" => {
+            let top_reason = top_count_entry(&bucket.reason_counts);
+            (
+                top_reason
+                    .as_ref()
+                    .map(|(reason, count)| format!("{count} geo-related events led by {reason}"))
+                    .unwrap_or_else(|| "Geo-related signals detected in this bucket.".to_string()),
+                SearchFilters {
+                    reason: top_reason.map(|(reason, _)| reason),
+                    ..SearchFilters::default()
+                },
+            )
+        }
+        "zero_response" => {
+            let top_destination = top_count_entry(&bucket.destination_counts);
+            (
+                top_destination
+                    .as_ref()
+                    .map(|(destination, count)| {
+                        format!("{count} zero-response events targeting {destination}")
+                    })
+                    .unwrap_or_else(|| {
+                        "Zero-response destinations detected in this bucket.".to_string()
+                    }),
+                SearchFilters {
+                    server_ip: top_destination.map(|(destination, _)| destination),
+                    ..SearchFilters::default()
+                },
+            )
+        }
+        _ => {
+            let top_reason = top_count_entry(&bucket.reason_counts);
+            (
+                top_reason
+                    .as_ref()
+                    .map(|(reason, count)| format!("{count} blocked/policy events led by {reason}"))
+                    .unwrap_or_else(|| {
+                        "Blocked/policy activity detected in this bucket.".to_string()
+                    }),
+                SearchFilters {
+                    action: Some("Blocked".to_string()),
+                    reason: top_reason.map(|(reason, _)| reason),
+                    ..SearchFilters::default()
+                },
+            )
+        }
+    };
+
+    let _ = fields;
+    Some(SearchTimelineMarker {
+        at: bucket_start,
+        bucket_start,
+        bucket_end,
+        category: dominant.1.to_string(),
+        severity: dominant.2.to_string(),
+        label: dominant.1.to_string(),
+        summary,
+        filters,
+    })
 }
 
 fn grouped_columns_for_mode(fields: &FieldMap, mode: SearchViewMode) -> Vec<String> {
@@ -2135,6 +2707,7 @@ fn validate_filters(filters: &SearchFilters, re: &Regex) -> Result<()> {
     validate_filter_value(filters.url.as_deref(), re, false)?;
     validate_filter_value(filters.action.as_deref(), re, false)?;
     validate_filter_value(filters.response_code.as_deref(), re, true)?;
+    validate_filter_value(filters.response_size.as_deref(), re, true)?;
     validate_reason_filter(filters.reason.as_deref())?;
     validate_filter_value(filters.threat.as_deref(), re, false)?;
     validate_filter_value(filters.category.as_deref(), re, false)?;
@@ -2473,6 +3046,33 @@ mod tests {
         let sql = build_search_sql(&columns, &req, &fields, src, 50, 0);
 
         assert!(sql.contains("LOWER(CAST(\"sip\" AS VARCHAR)) IN ('1.1.1.1', '8.8.8.8')"));
+    }
+
+    #[test]
+    fn build_search_sql_supports_response_size_and_tls_filters() {
+        let fields = FieldMap::default();
+        let req = SearchRequest {
+            time_from: Utc::now() - ChronoDuration::hours(1),
+            time_to: Utc::now(),
+            filters: SearchFilters {
+                response_size: Some("0".to_string()),
+                tls_issue_only: Some(true),
+                ..SearchFilters::default()
+            },
+            limit: Some(100),
+            page: None,
+            page_size: None,
+            columns: None,
+        };
+        let columns = vec![
+            "time".to_string(),
+            "reason".to_string(),
+            "respsize".to_string(),
+        ];
+        let sql = build_search_sql(&columns, &req, &fields, "read_parquet('x')", 100, 0);
+        assert!(sql.contains("LOWER(CAST(\"reason\" AS VARCHAR))"));
+        assert!(sql.contains("CAST(\"respsize\" AS VARCHAR)"));
+        assert!(sql.contains("'0'"));
     }
 
     #[test]

@@ -40,9 +40,12 @@ pub struct SearchFilters {
     pub action: Option<String>,
     #[serde(alias = "respcode")]
     pub response_code: Option<String>,
+    #[serde(alias = "respsize")]
+    pub response_size: Option<String>,
     pub reason: Option<String>,
     pub threat: Option<String>,
     pub category: Option<String>,
+    pub tls_issue_only: Option<bool>,
     #[serde(alias = "cip")]
     pub source_ip: Option<String>,
     #[serde(alias = "sip")]
@@ -110,10 +113,23 @@ pub struct SearchTimelinePoint {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct SearchTimelineMarker {
+    pub at: DateTime<Utc>,
+    pub bucket_start: DateTime<Utc>,
+    pub bucket_end: DateTime<Utc>,
+    pub category: String,
+    pub severity: String,
+    pub label: String,
+    pub summary: String,
+    pub filters: SearchFilters,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchTimelineResponse {
     pub generated_at: DateTime<Utc>,
     pub bucket_minutes: u32,
     pub points: Vec<SearchTimelinePoint>,
+    pub markers: Vec<SearchTimelineMarker>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -124,11 +140,24 @@ pub struct SearchTriageRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchTriageResponse {
     pub generated_at: DateTime<Utc>,
+    pub root_cause_buckets: Vec<SearchTriageBucket>,
     pub top_reasons: Vec<SupportSummaryItem>,
     pub top_response_codes: Vec<SupportSummaryItem>,
     pub top_destinations: Vec<SupportSummaryItem>,
+    pub top_users: Vec<SupportSummaryItem>,
     pub zero_response_destinations: Vec<SupportSummaryItem>,
     pub tls_or_ssl_indicators: Vec<SupportSummaryItem>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchTriageBucket {
+    pub id: String,
+    pub title: String,
+    pub severity: String,
+    pub summary: String,
+    pub count: usize,
+    pub filters: SearchFilters,
+    pub example_values: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -395,6 +424,27 @@ pub struct InvestigationPinnedItem {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct InvestigationWorkspaceState {
+    pub original_time_from: DateTime<Utc>,
+    pub original_time_to: DateTime<Utc>,
+    pub active_view_mode: SearchViewMode,
+    pub focus_label: Option<String>,
+}
+
+impl Default for InvestigationWorkspaceState {
+    fn default() -> Self {
+        let now = Utc::now();
+        Self {
+            original_time_from: now,
+            original_time_to: now,
+            active_view_mode: SearchViewMode::Raw,
+            focus_label: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InvestigationSession {
     pub id: String,
     pub created_at: DateTime<Utc>,
@@ -406,6 +456,8 @@ pub struct InvestigationSession {
     pub pivots: Vec<InvestigationPivot>,
     #[serde(default)]
     pub pinned_items: Vec<InvestigationPinnedItem>,
+    #[serde(default)]
+    pub workspace: InvestigationWorkspaceState,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -429,6 +481,8 @@ pub struct InvestigationUpdateRequest {
     pub page: Option<u32>,
     pub page_size: Option<u32>,
     pub pivots: Option<Vec<InvestigationPivotInput>>,
+    pub view_mode: Option<SearchViewMode>,
+    pub focus_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

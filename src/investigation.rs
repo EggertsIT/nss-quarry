@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::models::{
     InvestigationPinnedItem, InvestigationPivot, InvestigationPivotInput, InvestigationSession,
-    InvestigationUpdateRequest, SearchFilters, SearchRequest,
+    InvestigationUpdateRequest, InvestigationWorkspaceState, SearchFilters, SearchRequest,
 };
 
 const STORE_VERSION: u32 = 1;
@@ -94,6 +94,11 @@ impl InvestigationService {
             updated_at: now,
             expires_at: now + self.inner.ttl,
             owner: owner.to_string(),
+            workspace: InvestigationWorkspaceState {
+                original_time_from: search.time_from,
+                original_time_to: search.time_to,
+                ..InvestigationWorkspaceState::default()
+            },
             search,
             pivots: Vec::new(),
             pinned_items: Vec::new(),
@@ -163,6 +168,22 @@ impl InvestigationService {
             }
             if let Some(pivots) = update.pivots {
                 session.pivots = build_pivots(pivots, input_value_re)?;
+            }
+            if let Some(view_mode) = update.view_mode {
+                session.workspace.active_view_mode = view_mode;
+            }
+            if let Some(focus_label) = update.focus_label {
+                let normalized = focus_label.trim();
+                session.workspace.focus_label = if normalized.is_empty() {
+                    None
+                } else {
+                    Some(
+                        normalized
+                            .chars()
+                            .take(MAX_NOTE_TEXT_LEN)
+                            .collect::<String>(),
+                    )
+                };
             }
             validate_search_request(&session.search, input_value_re)?;
             Ok(())
@@ -551,6 +572,8 @@ mod tests {
                     limit: Some(1000),
                     page: Some(2),
                     page_size: Some(250),
+                    view_mode: None,
+                    focus_label: None,
                     pivots: Some(vec![
                         InvestigationPivotInput {
                             field: "reason".to_string(),
