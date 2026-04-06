@@ -41,11 +41,12 @@ use crate::models::{
     IngestorForceFinalizeOpenFilesResponse, InvestigationCreateRequest,
     InvestigationExportResponse, InvestigationPinRequest, InvestigationSession,
     InvestigationUpdateRequest, LocalLoginRequest, ParquetColumnInfo, PcapAnalyzeResponse,
-    ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchRequest, SupportSummaryRequest,
-    SupportSummaryResponse,
+    ReadyResponse, SchemaFieldInfo, SchemaResponse, SearchGroupedRequest, SearchGroupedResponse,
+    SearchRequest, SearchTimelineRequest, SearchTimelineResponse, SearchTriageRequest,
+    SearchTriageResponse, SearchViewMode, SupportSummaryRequest, SupportSummaryResponse,
 };
 use crate::pcap::analyze_pcap_file;
-use crate::query::{DashboardRefreshMode, QueryService, VisibilityFilters};
+use crate::query::{DashboardRefreshMode, GroupedSearchOptions, QueryService, VisibilityFilters};
 use crate::summary::build_support_summary;
 use crate::webui::render_dashboard_html;
 
@@ -242,6 +243,9 @@ fn build_router(state: AppState) -> Router {
             post(api_admin_ingestor_force_finalize_open_files),
         )
         .route("/api/search", post(api_search))
+        .route("/api/search/timeline", post(api_search_timeline))
+        .route("/api/search/triage", post(api_search_triage))
+        .route("/api/search/grouped", post(api_search_grouped))
         .route("/api/investigations", post(api_investigations_create))
         .route(
             "/api/investigations/{id}",
@@ -602,6 +606,141 @@ async fn api_search(
                 "source_ip": source_ip,
                 "query": req,
                 "rows": result.row_count
+            }),
+        })
+        .await;
+    Ok(Json(result))
+}
+
+async fn api_search_timeline(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<SearchTimelineRequest>,
+) -> Result<Json<SearchTimelineResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let result = state
+        .query
+        .search_timeline(req.search.clone(), user.role, req.bucket_minutes)
+        .await
+        .map_err(AppError::bad_request)?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.search.timeline".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "query": req.search,
+                "bucket_minutes": result.bucket_minutes,
+                "points": result.points.len()
+            }),
+        })
+        .await;
+    Ok(Json(result))
+}
+
+async fn api_search_triage(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<SearchTriageRequest>,
+) -> Result<Json<SearchTriageResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let result = state
+        .query
+        .search_triage(req.search.clone(), user.role)
+        .await
+        .map_err(AppError::bad_request)?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.search.triage".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "query": req.search,
+                "top_reasons": result.top_reasons.len(),
+                "top_response_codes": result.top_response_codes.len(),
+            }),
+        })
+        .await;
+    Ok(Json(result))
+}
+
+async fn api_search_grouped(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Json(req): Json<SearchGroupedRequest>,
+) -> Result<Json<SearchGroupedResponse>, AppError> {
+    let source_ip = extract_source_ip(&headers, Some(peer));
+    let user = require_user(
+        &state,
+        &jar,
+        &headers,
+        source_ip.as_deref(),
+        RoleName::Helpdesk,
+    )
+    .await?;
+    let view_mode = req.view_mode.unwrap_or(SearchViewMode::Raw);
+    let result = state
+        .query
+        .search_grouped(
+            req.search.clone(),
+            user.role,
+            GroupedSearchOptions {
+                view_mode,
+                sort_by: req.sort_by.clone(),
+                sort_desc: req.sort_desc,
+                page: req.page,
+                page_size: req.page_size,
+            },
+        )
+        .await
+        .map_err(AppError::bad_request)?;
+    state
+        .audit
+        .log(AuditEvent {
+            at: Utc::now(),
+            actor: Some(user.username),
+            role: Some(user.role),
+            action: "query.search.grouped".to_string(),
+            outcome: "success".to_string(),
+            metadata: serde_json::json!({
+                "auth_mode": user.auth_mode,
+                "source_ip": source_ip,
+                "query": req.search,
+                "view_mode": view_mode,
+                "row_count": result.row_count,
+                "total_groups": result.total_groups,
             }),
         })
         .await;

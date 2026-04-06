@@ -807,6 +807,43 @@
       background: rgba(248, 252, 255, 0.99);
       box-shadow: 1px 0 0 rgba(177, 201, 229, 0.62);
     }
+    .results-table tbody tr.selected-row td {
+      background: rgba(31, 120, 216, 0.12) !important;
+    }
+    .timeline-chart-wrap {
+      border: 1px solid rgba(186, 210, 236, 0.9);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(254, 255, 255, 0.98), rgba(245, 250, 255, 0.94));
+      min-height: 180px;
+      overflow: hidden;
+    }
+    .timeline-empty {
+      padding: 18px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .timeline-svg {
+      display: block;
+      width: 100%;
+      height: 220px;
+    }
+    .timeline-controls {
+      display: grid;
+      grid-template-columns: auto minmax(160px, 1fr) auto minmax(160px, 1fr) auto;
+      gap: 8px 10px;
+      align-items: center;
+      margin-top: 10px;
+    }
+    .timeline-controls label {
+      font-size: 0.78rem;
+      color: var(--muted);
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .timeline-controls input[type="range"] {
+      width: 100%;
+    }
     @media (max-width: 1020px) {
       .panel-full-bleed {
         width: auto;
@@ -821,6 +858,9 @@
         min-width: 0;
       }
       .form-grid .form-actions {
+        grid-template-columns: 1fr;
+      }
+      .timeline-controls {
         grid-template-columns: 1fr;
       }
       .menu-group.right {
@@ -1347,6 +1387,24 @@
           <div class="field-wide"><label for="time-to">To</label><input id="time-to" type="datetime-local" required></div>
           <div><label for="limit">Limit (max rows)</label><input id="limit" type="number" min="1" max="50000" value="5000"></div>
           <div><label for="page-size">Page Size</label><input id="page-size" type="number" min="1" max="2000" value="200"></div>
+          <div>
+            <label for="view-mode">View Mode</label>
+            <select id="view-mode">
+              <option value="raw" selected>raw</option>
+              <option value="by_destination">by_destination</option>
+              <option value="by_reason">by_reason</option>
+              <option value="by_user_device">by_user_device</option>
+            </select>
+          </div>
+          <div>
+            <label for="timeline-bucket">Timeline Bucket</label>
+            <select id="timeline-bucket">
+              <option value="">Auto</option>
+              <option value="5">5 minutes</option>
+              <option value="15">15 minutes</option>
+              <option value="60">60 minutes</option>
+            </select>
+          </div>
           <div><label for="f-user">User</label><input id="f-user" placeholder="alice"></div>
           <div><label for="f-url">URL</label><input id="f-url" placeholder="example.com"></div>
           <div>
@@ -1413,6 +1471,23 @@
         </div>
         <div id="support-summary-msg" class="message"></div>
         <div id="support-summary" class="support-summary-shell muted">Run a search or analyze a PCAP/PCAPNG file to generate a support summary.</div>
+      </div>
+
+      <div class="panel panel-full-bleed" style="margin-top: 14px;">
+        <div class="section-header">
+          <h3>Investigation Timeline</h3>
+          <div id="timeline-meta" class="muted">Run a search to render timeline buckets.</div>
+        </div>
+        <div id="timeline-chart" class="timeline-chart-wrap">
+          <div class="timeline-empty">Run a search to render timeline buckets.</div>
+        </div>
+        <div class="timeline-controls">
+          <label for="timeline-brush-start">Brush Start</label>
+          <input id="timeline-brush-start" type="range" min="0" max="0" value="0" disabled>
+          <label for="timeline-brush-end">Brush End</label>
+          <input id="timeline-brush-end" type="range" min="0" max="0" value="0" disabled>
+          <button id="timeline-apply" type="button" class="ghost" disabled>Apply Brush to Time Window</button>
+        </div>
       </div>
 
       <div class="panel map-panel" style="margin-top: 14px;">
@@ -1625,6 +1700,9 @@
     const auditPageSize = 50;
     let activeInvestigation = null;
     let latestSearchRowsData = [];
+    let latestTimelinePoints = [];
+    let selectedSearchRow = null;
+    let selectedSearchRowIndex = -1;
     const mapViewState = {};
     const PIVOTABLE_FIELDS = new Set([
       "sip",
@@ -2934,6 +3012,22 @@
       return trimmed.length > 0 ? trimmed : null;
     }
 
+    function currentSearchViewMode() {
+      const raw = String($("view-mode").value || "raw").trim().toLowerCase();
+      if (raw === "by_destination" || raw === "by_reason" || raw === "by_user_device") {
+        return raw;
+      }
+      return "raw";
+    }
+
+    function currentTimelineBucketMinutes() {
+      const raw = String($("timeline-bucket").value || "").trim();
+      if (!raw) return null;
+      const value = Number.parseInt(raw, 10);
+      if (!Number.isFinite(value) || value <= 0) return null;
+      return value;
+    }
+
     function buildSearchRequestFromForm() {
       const limitValue = Number.parseInt($("limit").value, 10) || 5000;
       const pageSizeValue = Number.parseInt($("page-size").value, 10) || 200;
@@ -3329,6 +3423,7 @@
       setMessage("search-msg", "");
       const resetPage = options && options.resetPage === true;
       const req = buildSearchRequestFromForm();
+      const viewMode = currentSearchViewMode();
       if (!req.time_from || !req.time_to) {
         setMessage("search-msg", "Please provide valid from/to timestamps.");
         resetSupportSummary("Provide a valid search window to generate a support summary.");
@@ -3343,52 +3438,93 @@
       setSearchLoadingPhase(loadingToken, "Querying parquet data...");
       const displayColumns = resolveSearchDisplayColumns(req);
       const queryReq = buildSearchQueryRequest(req, displayColumns, searchPage, searchPageSize);
+      const groupedReq = {
+        search: req,
+        view_mode: viewMode,
+        sort_by: "count",
+        sort_desc: true,
+        page: searchPage,
+        page_size: searchPageSize,
+      };
       try {
         const renderToken = ++latestSearchRenderToken;
         const startedAt = performance.now();
-        const result = await apiFetch("/api/search", { method: "POST", body: queryReq });
+        const result = viewMode === "raw"
+          ? await apiFetch("/api/search", { method: "POST", body: queryReq })
+          : await apiFetch("/api/search/grouped", { method: "POST", body: groupedReq });
         const fetchMs = performance.now() - startedAt;
         setSearchLoadingPhase(loadingToken, "Rendering search results...");
         const renderStartedAt = performance.now();
-        renderSearchResult(result, renderToken, { fetchMs }, displayColumns);
+        renderSearchResult(result, renderToken, { fetchMs, viewMode }, displayColumns);
         const renderMs = performance.now() - renderStartedAt;
         try {
-          await syncActiveInvestigationFromSearch(queryReq);
+          await syncActiveInvestigationFromSearch({
+            page: searchPage,
+            page_size: searchPageSize,
+            columns: Array.isArray(displayColumns) ? displayColumns : null,
+          });
         } catch (syncErr) {
           setMessage("investigation-msg", syncErr.message || "Failed to sync investigation session.");
         }
         setMessageTone(
           "search-msg",
-          `Search API ${fetchMs.toFixed(0)} ms | table render ${renderMs.toFixed(0)} ms | background visuals continue asynchronously.`,
+          `Search API ${fetchMs.toFixed(0)} ms | table render ${renderMs.toFixed(0)} ms | mode=${viewMode} | background visuals continue asynchronously.`,
           "info"
         );
-        void refreshSearchEnhancements(result, renderToken);
+        void refreshSearchEnhancements(result, renderToken, req, viewMode);
       } finally {
         stopSearchLoading(loadingToken);
       }
     }
 
-    async function refreshSearchEnhancements(result, renderToken) {
+    async function refreshSearchEnhancements(result, renderToken, baseSearchReq, viewMode) {
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
       if (renderToken !== latestSearchRenderToken) return;
       const rows = Array.isArray(result?.rows) ? result.rows : [];
-      renderSearchInsights(rows);
+      try {
+        const triage = await apiFetch("/api/search/triage", {
+          method: "POST",
+          body: { search: baseSearchReq },
+        });
+        renderSearchInsightsFromTriage(triage);
+      } catch (err) {
+        renderSearchInsights(rows);
+      }
       if (renderToken !== latestSearchRenderToken) return;
       try {
-        await renderSearchFlowMap(rows);
+        const timeline = await apiFetch("/api/search/timeline", {
+          method: "POST",
+          body: {
+            search: baseSearchReq,
+            bucket_minutes: currentTimelineBucketMinutes(),
+          },
+        });
+        renderSearchTimeline(timeline);
       } catch (err) {
-        console.warn("search flow map render failed", err);
+        renderSearchTimeline(null);
+      }
+      if (renderToken !== latestSearchRenderToken) return;
+      if (viewMode === "raw") {
+        try {
+          await renderSearchFlowMap(rows);
+        } catch (err) {
+          console.warn("search flow map render failed", err);
+        }
+      } else {
+        await renderSearchFlowMap([]);
       }
       if (renderToken !== latestSearchRenderToken) return;
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (renderToken !== latestSearchRenderToken) return;
       try {
         if (typeof renderSearchSankey === "function") {
-          renderSearchSankey(rows);
+          renderSearchSankey(viewMode === "raw" ? rows : []);
         }
       } catch (err) {
         console.warn("search sankey render failed", err);
       }
+      if (renderToken !== latestSearchRenderToken) return;
+      await runSupportSummary(baseSearchReq);
     }
 
     function resolveSearchDisplayColumns(req) {
@@ -4021,6 +4157,155 @@
       }
     }
 
+    function renderSearchInsightsFromTriage(triage) {
+      const reasons = Array.isArray(triage?.top_reasons) ? triage.top_reasons : [];
+      const codes = Array.isArray(triage?.top_response_codes) ? triage.top_response_codes : [];
+      const zero = Array.isArray(triage?.zero_response_destinations)
+        ? triage.zero_response_destinations
+        : [];
+      const tls = Array.isArray(triage?.tls_or_ssl_indicators) ? triage.tls_or_ssl_indicators : [];
+
+      const reasonHtml = reasons
+        .slice(0, 10)
+        .map((item) => {
+          const reason = String(item.value || "None");
+          const info = reasonHintFromPolicyReason(reason);
+          return `<div><div class="insight-row"><span class="insight-label" title="${escapeHtml(reason)}">${escapeHtml(reason)}</span><strong>${Number(item.count || 0)}</strong></div><div class="insight-hint"><span class="badge-${info.severity}">${info.severity.toUpperCase()}</span> • ${escapeHtml(info.hint)}</div></div>`;
+        })
+        .join("");
+      setInsightRows("insight-reasons", reasonHtml || "<div class='muted'>No policy reason signals.</div>");
+
+      const codeHtml = codes
+        .slice(0, 12)
+        .map((item) => `<div class="insight-row"><span class="insight-label">${escapeHtml(String(item.value || "None"))}</span><strong>${Number(item.count || 0)}</strong></div>`)
+        .join("");
+      setInsightRows("insight-respcode", codeHtml || "<div class='muted'>No response code signals.</div>");
+
+      const zeroHtml = zero
+        .slice(0, 12)
+        .map((item) => `<div class="insight-row"><span class="insight-label" title="${escapeHtml(String(item.value || "None"))}">${escapeHtml(String(item.value || "None"))}</span><strong>${Number(item.count || 0)}</strong></div>`)
+        .join("");
+      const tlsHtml = tls
+        .slice(0, 8)
+        .map((item) => `<div class="insight-row"><span class="insight-label" title="${escapeHtml(String(item.value || "None"))}">${escapeHtml(String(item.value || "None"))}</span><strong>${Number(item.count || 0)}</strong></div>`)
+        .join("");
+
+      setInsightRows(
+        "insight-zero-respsize",
+        [zeroHtml, tlsHtml ? `<div style="margin-top:8px;"><strong>TLS/SSL:</strong></div>${tlsHtml}` : ""]
+          .filter(Boolean)
+          .join("") || "<div class='muted'>No zero-response destinations.</div>"
+      );
+    }
+
+    function resetTimelineBrush() {
+      const start = $("timeline-brush-start");
+      const end = $("timeline-brush-end");
+      const apply = $("timeline-apply");
+      start.min = "0";
+      start.max = "0";
+      start.value = "0";
+      start.disabled = true;
+      end.min = "0";
+      end.max = "0";
+      end.value = "0";
+      end.disabled = true;
+      apply.disabled = true;
+    }
+
+    function renderSearchTimeline(payload) {
+      const chartHost = $("timeline-chart");
+      const metaHost = $("timeline-meta");
+      latestTimelinePoints = Array.isArray(payload?.points) ? payload.points : [];
+      chartHost.innerHTML = "";
+      if (!payload || !Array.isArray(payload.points) || payload.points.length === 0) {
+        metaHost.textContent = "Run a search to render timeline buckets.";
+        chartHost.innerHTML = "<div class='timeline-empty'>Run a search to render timeline buckets.</div>";
+        resetTimelineBrush();
+        return;
+      }
+      const points = payload.points;
+      const width = Math.max(920, chartHost.clientWidth || 0);
+      const height = 220;
+      const padLeft = 38;
+      const padRight = 18;
+      const padTop = 18;
+      const padBottom = 28;
+      const innerW = Math.max(1, width - padLeft - padRight);
+      const innerH = Math.max(1, height - padTop - padBottom);
+      const maxCount = Math.max(1, ...points.map((p) => Number(p.count || 0)));
+      const barW = innerW / Math.max(points.length, 1);
+      const bars = points
+        .map((p, idx) => {
+          const count = Number(p.count || 0);
+          const blocked = Number(p.blocked || 0);
+          const barH = Math.max(1, Math.round((count / maxCount) * innerH));
+          const x = padLeft + idx * barW + Math.max(1, barW * 0.08);
+          const y = padTop + innerH - barH;
+          const w = Math.max(1, barW * 0.84);
+          const blockedH = count > 0 ? Math.max(0, Math.round((blocked / count) * barH)) : 0;
+          const blockedY = y + (barH - blockedH);
+          const title = `${p.bucket_start} | events=${count} | blocked=${blocked}`;
+          return `<g><title>${escapeHtml(title)}</title><rect x="${x.toFixed(1)}" y="${y}" width="${w.toFixed(1)}" height="${barH}" fill="#66aeea" opacity="0.78"></rect>${blockedH > 0 ? `<rect x="${x.toFixed(1)}" y="${blockedY}" width="${w.toFixed(1)}" height="${blockedH}" fill="#1f78d8" opacity="0.92"></rect>` : ""}</g>`;
+        })
+        .join("");
+      const axis = `<line x1="${padLeft}" y1="${padTop + innerH}" x2="${width - padRight}" y2="${padTop + innerH}" stroke="#9db8d8" stroke-width="1"/>`;
+      chartHost.innerHTML = `<svg class="timeline-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Search timeline">${axis}${bars}</svg>`;
+      metaHost.textContent = `Bucket: ${payload.bucket_minutes}m | points: ${points.length} | events: ${points.reduce((a, b) => a + Number(b.count || 0), 0).toLocaleString()}`;
+
+      const start = $("timeline-brush-start");
+      const end = $("timeline-brush-end");
+      const apply = $("timeline-apply");
+      start.min = "0";
+      start.max = String(points.length - 1);
+      start.value = "0";
+      start.disabled = false;
+      end.min = "0";
+      end.max = String(points.length - 1);
+      end.value = String(points.length - 1);
+      end.disabled = false;
+      apply.disabled = false;
+    }
+
+    function normalizeTimelineBrush() {
+      const start = $("timeline-brush-start");
+      const end = $("timeline-brush-end");
+      let s = Number.parseInt(start.value, 10) || 0;
+      let e = Number.parseInt(end.value, 10) || 0;
+      if (s > e) {
+        if (document.activeElement === start) {
+          e = s;
+          end.value = String(e);
+        } else {
+          s = e;
+          start.value = String(s);
+        }
+      }
+      return { startIndex: s, endIndex: e };
+    }
+
+    async function applyTimelineBrushToSearch() {
+      if (!Array.isArray(latestTimelinePoints) || latestTimelinePoints.length === 0) {
+        return;
+      }
+      const { startIndex, endIndex } = normalizeTimelineBrush();
+      const startPoint = latestTimelinePoints[startIndex];
+      const endPoint = latestTimelinePoints[endIndex];
+      if (!startPoint || !endPoint) {
+        return;
+      }
+      const from = new Date(startPoint.bucket_start);
+      const to = new Date(endPoint.bucket_end || endPoint.bucket_start);
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+        return;
+      }
+      $("time-from").value = toLocalInputValue(from);
+      $("time-to").value = toLocalInputValue(to);
+      searchPage = 1;
+      await runSearch({ resetPage: true });
+      setMessage("search-msg", "Timeline brush applied to search window.", true);
+    }
+
     function renderSearchInsights(rows) {
       const respHost = $("insight-respcode");
       const zeroHost = $("insight-zero-respsize");
@@ -4262,6 +4547,15 @@
       const tbody = document.createElement("tbody");
       rows.forEach((row, rowIndex) => {
         const tr = document.createElement("tr");
+        tr.dataset.rowIndex = String(rowIndex);
+        tr.addEventListener("click", () => {
+          selectedSearchRow = row;
+          selectedSearchRowIndex = rowIndex;
+          for (const other of tbody.querySelectorAll("tr.selected-row")) {
+            other.classList.remove("selected-row");
+          }
+          tr.classList.add("selected-row");
+        });
 
         const actionTd = document.createElement("td");
         actionTd.className = "row-action-cell sticky-col";
@@ -4319,7 +4613,10 @@
 
     function renderSearchResult(result, renderToken, metrics = null, displayColumns = null) {
       const rows = result.rows || [];
+      const viewMode = metrics && metrics.viewMode ? metrics.viewMode : "raw";
       latestSearchRowsData = Array.isArray(rows) ? rows : [];
+      selectedSearchRow = null;
+      selectedSearchRowIndex = -1;
       searchPage = Number(result.page || searchPage || 1);
       searchPageSize = Number(result.page_size || searchPageSize || 200);
       searchHasMore = Boolean(result.has_more);
@@ -4331,6 +4628,10 @@
       ];
       parts.push(`Page: ${searchPage}`);
       parts.push(`Has more: ${searchHasMore ? "yes" : "no"}`);
+      parts.push(`Mode: ${viewMode}`);
+      if (Number.isFinite(result.total_groups)) {
+        parts.push(`Groups: ${result.total_groups}`);
+      }
       if (metrics && Number.isFinite(metrics.fetchMs)) {
         parts.push(`Search API: ${metrics.fetchMs.toFixed(0)} ms`);
       }
@@ -4367,7 +4668,7 @@
       renderSearchResultTables(rows);
       renderEvidenceBasket();
       if (renderToken === latestSearchRenderToken) {
-        resetSupportSummary("Search results are ready. Generate a support summary on demand for the current search.");
+        resetSupportSummary("Search results are ready. Support summary will refresh in the background.");
       }
     }
 
@@ -4773,12 +5074,70 @@
       showApp(false);
     }
 
+    function isTypingContext(target) {
+      if (!target) return false;
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return true;
+      return Boolean(target.isContentEditable);
+    }
+
+    async function handleWorkspaceShortcut(event) {
+      if (activeView !== "search") return;
+      if (!currentUser || !["helpdesk", "analyst", "admin"].includes(String(currentUser.role || ""))) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+      const key = String(event.key || "");
+      if (key === "f" || key === "F") {
+        if (!isTypingContext(event.target)) {
+          event.preventDefault();
+          $("f-user").focus();
+        }
+        return;
+      }
+      if (key === "[") {
+        if (!isTypingContext(event.target) && !$("search-prev").disabled) {
+          event.preventDefault();
+          $("search-prev").click();
+        }
+        return;
+      }
+      if (key === "]") {
+        if (!isTypingContext(event.target) && !$("search-next").disabled) {
+          event.preventDefault();
+          $("search-next").click();
+        }
+        return;
+      }
+      if (key === "p" || key === "P") {
+        if (!isTypingContext(event.target) && selectedSearchRow) {
+          event.preventDefault();
+          try {
+            await pinEvidenceRow(selectedSearchRow);
+          } catch (err) {
+            setMessage("evidence-msg", err.message || "Failed to pin selected row.");
+          }
+        }
+        return;
+      }
+      if (key === "e" || key === "E") {
+        if (!isTypingContext(event.target) && activeInvestigation && activeInvestigation.id) {
+          event.preventDefault();
+          try {
+            await exportInvestigationPackage();
+          } catch (err) {
+            setMessage("investigation-msg", err.message || "Failed to export investigation package.");
+          }
+        }
+      }
+    }
+
     async function init() {
       $("auth-mode-label").textContent = modeLabel(AUTH_MODE);
       $("auth-mode-chip").textContent = `Configured authentication: ${modeLabel(AUTH_MODE)}`;
       toggleAuthUi();
       populatePolicyReasonOptions();
       resetSupportSummary();
+      resetTimelineBrush();
       updateSearchPaginationMeta();
       renderInvestigationMeta();
       renderPivotChips();
@@ -4906,6 +5265,29 @@
         e.preventDefault();
         try { await runSearch({ resetPage: true }); } catch (err) { setMessage("search-msg", err.message || "Search failed"); }
       });
+      $("view-mode").addEventListener("change", async () => {
+        searchPage = 1;
+        try {
+          await runSearch({ resetPage: true });
+        } catch (err) {
+          setMessage("search-msg", err.message || "Search failed");
+        }
+      });
+      $("timeline-bucket").addEventListener("change", async () => {
+        if (!latestSearchRequest) return;
+        try {
+          const timeline = await apiFetch("/api/search/timeline", {
+            method: "POST",
+            body: {
+              search: latestSearchRequest,
+              bucket_minutes: currentTimelineBucketMinutes(),
+            },
+          });
+          renderSearchTimeline(timeline);
+        } catch (err) {
+          setMessage("search-msg", err.message || "Timeline refresh failed.");
+        }
+      });
       $("investigation-create").addEventListener("click", async () => {
         try {
           await createInvestigationSession();
@@ -4949,6 +5331,15 @@
           setMessage("search-msg", err.message || "Search page failed");
         }
       });
+      $("timeline-brush-start").addEventListener("input", normalizeTimelineBrush);
+      $("timeline-brush-end").addEventListener("input", normalizeTimelineBrush);
+      $("timeline-apply").addEventListener("click", async () => {
+        try {
+          await applyTimelineBrushToSearch();
+        } catch (err) {
+          setMessage("search-msg", err.message || "Failed to apply timeline brush.");
+        }
+      });
       $("export-csv").addEventListener("click", async () => {
         try { await exportCsv(); } catch (err) { setMessage("search-msg", err.message || "Export failed"); }
       });
@@ -4982,6 +5373,9 @@
         } catch (err) {
           setMessage("token-msg", err.message || "Failed to load API tokens.");
         }
+      });
+      document.addEventListener("keydown", (event) => {
+        void handleWorkspaceShortcut(event);
       });
 
       const isAuthed = await checkSession();

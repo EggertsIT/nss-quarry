@@ -6,15 +6,16 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Timelike, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, NaiveDateTime, Timelike, Utc};
 use duckdb::Connection;
 use regex::Regex;
 use tracing::{error, warn};
 
 use crate::config::{AppConfig, FieldMap, RoleName};
 use crate::models::{
-    DashboardResponse, DashboardStatus, MetricCard, SearchFilters, SearchRequest, SearchResponse,
-    TableBlock,
+    DashboardResponse, DashboardStatus, MetricCard, SearchFilters, SearchGroupedResponse,
+    SearchRequest, SearchResponse, SearchTimelinePoint, SearchTimelineResponse,
+    SearchTriageResponse, SearchViewMode, SupportSummaryItem, TableBlock,
 };
 
 const MIN_SEARCH_TIMEOUT_MS: u64 = 60_000;
@@ -49,6 +50,15 @@ struct CompiledVisibilityFilters {
 pub enum DashboardRefreshMode {
     Normal,
     Delta,
+}
+
+#[derive(Debug, Clone)]
+pub struct GroupedSearchOptions {
+    pub view_mode: SearchViewMode,
+    pub sort_by: Option<String>,
+    pub sort_desc: Option<bool>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -150,6 +160,61 @@ impl QueryService {
         .await
         .map_err(|_| anyhow::anyhow!("query timed out"))?
         .context("search worker failed")??;
+        Ok(result)
+    }
+
+    pub async fn search_timeline(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+        bucket_minutes: Option<u32>,
+    ) -> Result<SearchTimelineResponse> {
+        let svc = self.clone();
+        let work = tokio::task::spawn_blocking(move || {
+            svc.search_timeline_sync(req, role, bucket_minutes)
+        });
+        let result = tokio::time::timeout(
+            Duration::from_millis(self.inner.timeout_ms.max(MIN_SEARCH_TIMEOUT_MS)),
+            work,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("timeline query timed out"))?
+        .context("timeline worker failed")??;
+        Ok(result)
+    }
+
+    pub async fn search_triage(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+    ) -> Result<SearchTriageResponse> {
+        let svc = self.clone();
+        let work = tokio::task::spawn_blocking(move || svc.search_triage_sync(req, role));
+        let result = tokio::time::timeout(
+            Duration::from_millis(self.inner.timeout_ms.max(MIN_SEARCH_TIMEOUT_MS)),
+            work,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("triage query timed out"))?
+        .context("triage worker failed")??;
+        Ok(result)
+    }
+
+    pub async fn search_grouped(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+        opts: GroupedSearchOptions,
+    ) -> Result<SearchGroupedResponse> {
+        let svc = self.clone();
+        let work = tokio::task::spawn_blocking(move || svc.search_grouped_sync(req, role, opts));
+        let result = tokio::time::timeout(
+            Duration::from_millis(self.inner.timeout_ms.max(MIN_SEARCH_TIMEOUT_MS)),
+            work,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("grouped query timed out"))?
+        .context("grouped worker failed")??;
         Ok(result)
     }
 
@@ -869,6 +934,253 @@ impl QueryService {
         })
     }
 
+    fn search_rows_for_analysis(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+        required_columns: &[String],
+        optional_columns: &[String],
+    ) -> Result<Vec<serde_json::Map<String, serde_json::Value>>> {
+        let mut all_columns = required_columns.to_vec();
+        for col in optional_columns {
+            if !all_columns.iter().any(|c| c == col) {
+                all_columns.push(col.clone());
+            }
+        }
+        let limit = req
+            .limit
+            .unwrap_or(self.inner.max_rows)
+            .clamp(1, self.inner.max_rows);
+        let mut full_req = req.clone();
+        full_req.columns = Some(all_columns);
+        full_req.page = Some(1);
+        full_req.page_size = Some(limit);
+        full_req.limit = Some(limit);
+        match self.search_sync(full_req, role) {
+            Ok(res) => Ok(res.rows),
+            Err(err) => {
+                if optional_columns.is_empty() || !is_missing_column_error(&err) {
+                    return Err(err);
+                }
+                let mut fallback_req = req;
+                fallback_req.columns = Some(required_columns.to_vec());
+                fallback_req.page = Some(1);
+                fallback_req.page_size = Some(limit);
+                fallback_req.limit = Some(limit);
+                let res = self.search_sync(fallback_req, role)?;
+                Ok(res.rows)
+            }
+        }
+    }
+
+    fn search_timeline_sync(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+        bucket_minutes: Option<u32>,
+    ) -> Result<SearchTimelineResponse> {
+        let required = vec![
+            self.inner.fields.time_field.clone(),
+            self.inner.fields.action_field.clone(),
+        ];
+        let rows = self.search_rows_for_analysis(req.clone(), role, &required, &[])?;
+        let bucket_minutes = normalize_bucket_minutes(req.time_from, req.time_to, bucket_minutes);
+        let step_secs = i64::from(bucket_minutes) * 60;
+        let mut buckets: BTreeMap<i64, (usize, usize)> = BTreeMap::new();
+
+        for row in &rows {
+            let Some(event_time) =
+                row_get_str(row, &self.inner.fields.time_field).and_then(parse_row_timestamp)
+            else {
+                continue;
+            };
+            if event_time < req.time_from || event_time >= req.time_to {
+                continue;
+            }
+            let bucket = align_to_bucket_start(event_time, step_secs);
+            let entry = buckets.entry(bucket.timestamp()).or_insert((0, 0));
+            entry.0 += 1;
+            let action = row_get_str(row, &self.inner.fields.action_field).unwrap_or_default();
+            if action.eq_ignore_ascii_case("blocked") {
+                entry.1 += 1;
+            }
+        }
+
+        let mut points = Vec::new();
+        let mut cursor = align_to_bucket_start(req.time_from, step_secs);
+        while cursor < req.time_to {
+            let key = cursor.timestamp();
+            let (count, blocked) = buckets.get(&key).copied().unwrap_or((0, 0));
+            let bucket_end = cursor + ChronoDuration::seconds(step_secs);
+            points.push(SearchTimelinePoint {
+                bucket_start: cursor,
+                bucket_end,
+                count,
+                blocked,
+            });
+            cursor = bucket_end;
+        }
+
+        Ok(SearchTimelineResponse {
+            generated_at: Utc::now(),
+            bucket_minutes,
+            points,
+        })
+    }
+
+    fn search_triage_sync(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+    ) -> Result<SearchTriageResponse> {
+        let required = vec![
+            self.inner.fields.reason_field.clone(),
+            self.inner.fields.response_code_field.clone(),
+            self.inner.fields.server_ip_field.clone(),
+        ];
+        let optional = vec![
+            "respsize".to_string(),
+            "externalspr".to_string(),
+            "cltsslfailreason".to_string(),
+            "is_ssluntrustedca".to_string(),
+            "is_sslselfsigned".to_string(),
+            "is_sslexpiredca".to_string(),
+            "clienttlsversion".to_string(),
+            "srvtlsversion".to_string(),
+            "ssl_rulename".to_string(),
+        ];
+        let rows = self.search_rows_for_analysis(req, role, &required, &optional)?;
+
+        let mut reason_counts: HashMap<String, usize> = HashMap::new();
+        let mut code_counts: HashMap<String, usize> = HashMap::new();
+        let mut destination_counts: HashMap<String, usize> = HashMap::new();
+        let mut zero_destination_counts: HashMap<String, usize> = HashMap::new();
+        let mut tls_counts: HashMap<String, usize> = HashMap::new();
+
+        for row in &rows {
+            let reason = normalized_row_value(row, &self.inner.fields.reason_field);
+            *reason_counts.entry(reason).or_insert(0) += 1;
+
+            let code = normalized_row_value(row, &self.inner.fields.response_code_field);
+            *code_counts.entry(code).or_insert(0) += 1;
+
+            let destination = normalized_row_value(row, &self.inner.fields.server_ip_field);
+            *destination_counts.entry(destination.clone()).or_insert(0) += 1;
+
+            if row
+                .get("respsize")
+                .and_then(|v| v.as_str())
+                .and_then(|v| v.parse::<i64>().ok())
+                == Some(0)
+            {
+                *zero_destination_counts.entry(destination).or_insert(0) += 1;
+            }
+
+            for tls_col in [
+                "externalspr",
+                "cltsslfailreason",
+                "is_ssluntrustedca",
+                "is_sslselfsigned",
+                "is_sslexpiredca",
+                "clienttlsversion",
+                "srvtlsversion",
+                "ssl_rulename",
+            ] {
+                let value = row
+                    .get(tls_col)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .unwrap_or("");
+                if value.is_empty() || value.eq_ignore_ascii_case("none") || value == "N/A" {
+                    continue;
+                }
+                let key = format!("{tls_col}={value}");
+                *tls_counts.entry(key).or_insert(0) += 1;
+            }
+        }
+
+        Ok(SearchTriageResponse {
+            generated_at: Utc::now(),
+            top_reasons: top_support_items(&reason_counts, 12),
+            top_response_codes: top_support_items(&code_counts, 12),
+            top_destinations: top_support_items(&destination_counts, 12),
+            zero_response_destinations: top_support_items(&zero_destination_counts, 12),
+            tls_or_ssl_indicators: top_support_items(&tls_counts, 12),
+        })
+    }
+
+    fn search_grouped_sync(
+        &self,
+        req: SearchRequest,
+        role: RoleName,
+        opts: GroupedSearchOptions,
+    ) -> Result<SearchGroupedResponse> {
+        let view_mode = opts.view_mode;
+        let sort_by = opts.sort_by;
+        let sort_desc = opts.sort_desc;
+        let page = opts.page;
+        let page_size = opts.page_size;
+        let group_columns = grouped_columns_for_mode(&self.inner.fields, view_mode);
+        let rows = self.search_rows_for_analysis(req.clone(), role, &group_columns, &[])?;
+        let mut counts: HashMap<Vec<String>, usize> = HashMap::new();
+        for row in rows {
+            let key = group_columns
+                .iter()
+                .map(|col| normalized_row_value(&row, col))
+                .collect::<Vec<_>>();
+            *counts.entry(key).or_insert(0) += 1;
+        }
+
+        let mut grouped_rows = counts
+            .into_iter()
+            .map(|(key, count)| {
+                let mut row = serde_json::Map::new();
+                for (idx, col) in group_columns.iter().enumerate() {
+                    row.insert(
+                        col.clone(),
+                        serde_json::Value::String(key.get(idx).cloned().unwrap_or_default()),
+                    );
+                }
+                row.insert(
+                    "count".to_string(),
+                    serde_json::Value::String(count.to_string()),
+                );
+                row
+            })
+            .collect::<Vec<_>>();
+
+        let sort_key = sort_by.unwrap_or_else(|| "count".to_string());
+        let desc = sort_desc.unwrap_or(true);
+        grouped_rows.sort_by(|a, b| compare_grouped_rows(a, b, &sort_key, desc));
+
+        let page_size = page_size
+            .or(req.page_size)
+            .unwrap_or(self.inner.default_limit)
+            .clamp(1, self.inner.max_rows);
+        let total_groups = grouped_rows.len();
+        let max_pages = (total_groups as u32).div_ceil(page_size).max(1);
+        let page = page.unwrap_or(1).clamp(1, max_pages);
+        let start = ((page - 1) * page_size) as usize;
+        let end = start.saturating_add(page_size as usize).min(total_groups);
+        let rows = if start < total_groups {
+            grouped_rows[start..end].to_vec()
+        } else {
+            Vec::new()
+        };
+        let has_more = end < total_groups;
+
+        Ok(SearchGroupedResponse {
+            view_mode,
+            row_count: rows.len(),
+            total_groups,
+            truncated: has_more,
+            page,
+            page_size,
+            has_more,
+            rows,
+        })
+    }
+
     fn dashboard_snapshot_get(&self, name: &str) -> Result<Option<DashboardSnapshot>> {
         {
             let guard = self
@@ -1448,6 +1760,149 @@ fn execute_search_sql(
 
 fn search_batch_limit(page_size: u32) -> u32 {
     page_size.clamp(200, 1_000)
+}
+
+fn is_missing_column_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string().to_lowercase();
+    msg.contains("binder error")
+        || msg.contains("referenced column")
+        || msg.contains("column with name")
+}
+
+fn normalize_bucket_minutes(from: DateTime<Utc>, to: DateTime<Utc>, requested: Option<u32>) -> u32 {
+    if let Some(value) = requested {
+        return value.clamp(1, 1_440);
+    }
+    let minutes = (to - from).num_minutes().max(1);
+    if minutes <= 24 * 60 {
+        5
+    } else if minutes <= 72 * 60 {
+        15
+    } else {
+        60
+    }
+}
+
+fn align_to_bucket_start(ts: DateTime<Utc>, bucket_secs: i64) -> DateTime<Utc> {
+    let epoch = ts.timestamp();
+    let aligned = epoch - epoch.rem_euclid(bucket_secs.max(1));
+    DateTime::from_timestamp(aligned, 0).unwrap_or(ts)
+}
+
+fn row_get_str<'a>(
+    row: &'a serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) -> Option<&'a str> {
+    row.get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+}
+
+fn parse_row_timestamp(value: &str) -> Option<DateTime<Utc>> {
+    let text = value.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if let Ok(ts) = DateTime::parse_from_rfc3339(text) {
+        return Some(ts.with_timezone(&Utc));
+    }
+    for fmt in [
+        "%Y-%m-%d %H:%M:%S%.f%:z",
+        "%Y-%m-%d %H:%M:%S%:z",
+        "%Y-%m-%d %H:%M:%S%.f",
+        "%Y-%m-%d %H:%M:%S",
+        "%a %b %e %H:%M:%S %Y",
+    ] {
+        if let Ok(dt) = DateTime::parse_from_str(text, fmt) {
+            return Some(dt.with_timezone(&Utc));
+        }
+        if let Ok(naive) = NaiveDateTime::parse_from_str(text, fmt) {
+            return Some(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
+        }
+    }
+    None
+}
+
+fn normalized_row_value(row: &serde_json::Map<String, serde_json::Value>, key: &str) -> String {
+    row.get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "None".to_string())
+}
+
+fn top_support_items(counts: &HashMap<String, usize>, limit: usize) -> Vec<SupportSummaryItem> {
+    let mut rows = counts
+        .iter()
+        .map(|(k, v)| (k.clone(), *v))
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    rows.into_iter()
+        .take(limit)
+        .map(|(value, count)| SupportSummaryItem {
+            value,
+            count,
+            hint: None,
+            severity: None,
+        })
+        .collect()
+}
+
+fn grouped_columns_for_mode(fields: &FieldMap, mode: SearchViewMode) -> Vec<String> {
+    match mode {
+        SearchViewMode::Raw => vec![
+            fields.time_field.clone(),
+            fields.action_field.clone(),
+            fields.server_ip_field.clone(),
+            fields.reason_field.clone(),
+            fields.response_code_field.clone(),
+            fields.user_field.clone(),
+            fields.device_field.clone(),
+        ],
+        SearchViewMode::ByDestination => vec![
+            fields.server_ip_field.clone(),
+            fields.action_field.clone(),
+            fields.response_code_field.clone(),
+        ],
+        SearchViewMode::ByReason => vec![
+            fields.reason_field.clone(),
+            fields.response_code_field.clone(),
+            fields.action_field.clone(),
+        ],
+        SearchViewMode::ByUserDevice => vec![
+            fields.user_field.clone(),
+            fields.device_field.clone(),
+            fields.action_field.clone(),
+        ],
+    }
+}
+
+fn compare_grouped_rows(
+    a: &serde_json::Map<String, serde_json::Value>,
+    b: &serde_json::Map<String, serde_json::Value>,
+    sort_key: &str,
+    desc: bool,
+) -> std::cmp::Ordering {
+    let order = if sort_key.eq_ignore_ascii_case("count") {
+        let av = a
+            .get("count")
+            .and_then(|v| v.as_str())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let bv = b
+            .get("count")
+            .and_then(|v| v.as_str())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        av.cmp(&bv)
+    } else {
+        let av = a.get(sort_key).and_then(|v| v.as_str()).unwrap_or_default();
+        let bv = b.get(sort_key).and_then(|v| v.as_str()).unwrap_or_default();
+        av.cmp(bv)
+    };
+    if desc { order.reverse() } else { order }
 }
 
 fn open_query_connection() -> Result<Connection> {

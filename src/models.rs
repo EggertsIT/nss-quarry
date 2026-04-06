@@ -63,6 +63,74 @@ pub struct SearchResponse {
     pub has_more: bool,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchViewMode {
+    Raw,
+    ByDestination,
+    ByReason,
+    ByUserDevice,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SearchGroupedRequest {
+    pub search: SearchRequest,
+    #[serde(default)]
+    pub view_mode: Option<SearchViewMode>,
+    pub sort_by: Option<String>,
+    pub sort_desc: Option<bool>,
+    pub page: Option<u32>,
+    pub page_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchGroupedResponse {
+    pub view_mode: SearchViewMode,
+    pub rows: Vec<serde_json::Map<String, serde_json::Value>>,
+    pub row_count: usize,
+    pub total_groups: usize,
+    pub truncated: bool,
+    pub page: u32,
+    pub page_size: u32,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SearchTimelineRequest {
+    pub search: SearchRequest,
+    pub bucket_minutes: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchTimelinePoint {
+    pub bucket_start: DateTime<Utc>,
+    pub bucket_end: DateTime<Utc>,
+    pub count: usize,
+    pub blocked: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchTimelineResponse {
+    pub generated_at: DateTime<Utc>,
+    pub bucket_minutes: u32,
+    pub points: Vec<SearchTimelinePoint>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SearchTriageRequest {
+    pub search: SearchRequest,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchTriageResponse {
+    pub generated_at: DateTime<Utc>,
+    pub top_reasons: Vec<SupportSummaryItem>,
+    pub top_response_codes: Vec<SupportSummaryItem>,
+    pub top_destinations: Vec<SupportSummaryItem>,
+    pub zero_response_destinations: Vec<SupportSummaryItem>,
+    pub tls_or_ssl_indicators: Vec<SupportSummaryItem>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SupportSummaryRequest {
     pub search: SearchRequest,

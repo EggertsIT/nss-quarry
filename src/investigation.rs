@@ -176,14 +176,14 @@ impl InvestigationService {
         row: serde_json::Map<String, serde_json::Value>,
         note: Option<String>,
     ) -> Result<Option<InvestigationSession>> {
-        self.mutate_session(id, move |session, input_value_re| {
+        self.mutate_session(id, move |session, _input_value_re| {
             if session.pinned_items.len() >= MAX_PINNED_ITEMS_PER_SESSION {
                 anyhow::bail!(
                     "max pinned items reached (max {})",
                     MAX_PINNED_ITEMS_PER_SESSION
                 );
             }
-            validate_pin_row(&row, input_value_re)?;
+            validate_pin_row(&row)?;
             let normalized_note = note
                 .as_deref()
                 .map(str::trim)
@@ -439,10 +439,7 @@ fn split_csv_values(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn validate_pin_row(
-    row: &serde_json::Map<String, serde_json::Value>,
-    input_value_re: &Regex,
-) -> Result<()> {
+fn validate_pin_row(row: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
     if row.is_empty() {
         anyhow::bail!("pin row cannot be empty");
     }
@@ -451,32 +448,34 @@ fn validate_pin_row(
     }
     for (key, value) in row {
         validate_identifier(key)?;
-        validate_pin_value(value, input_value_re)?;
+        validate_pin_value(value)?;
     }
     Ok(())
 }
 
-fn validate_pin_value(value: &serde_json::Value, input_value_re: &Regex) -> Result<()> {
+fn validate_pin_value(value: &serde_json::Value) -> Result<()> {
     match value {
         serde_json::Value::Null => Ok(()),
         serde_json::Value::Bool(_) => Ok(()),
         serde_json::Value::Number(_) => Ok(()),
-        serde_json::Value::String(text) => {
-            let clipped = text.chars().take(MAX_ROW_TEXT_LEN).collect::<String>();
-            if !input_value_re.is_match(&clipped) {
-                anyhow::bail!("pin row value contains disallowed characters");
-            }
-            Ok(())
-        }
-        other => {
-            let text = other.to_string();
-            let clipped = text.chars().take(MAX_ROW_TEXT_LEN).collect::<String>();
-            if !input_value_re.is_match(&clipped) {
-                anyhow::bail!("pin row value contains disallowed characters");
-            }
-            Ok(())
+        serde_json::Value::String(text) => validate_pin_text(text),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+            anyhow::bail!("pin row value must be a scalar (string/number/bool/null)")
         }
     }
+}
+
+fn validate_pin_text(value: &str) -> Result<()> {
+    if value.chars().count() > MAX_ROW_TEXT_LEN {
+        anyhow::bail!("pin row value exceeds {MAX_ROW_TEXT_LEN} characters");
+    }
+    if value
+        .chars()
+        .any(|c| c.is_control() && c != '\n' && c != '\r' && c != '\t')
+    {
+        anyhow::bail!("pin row value contains invalid control characters");
+    }
+    Ok(())
 }
 
 fn validate_identifier(value: &str) -> Result<()> {
@@ -598,5 +597,32 @@ mod tests {
         assert!(unpinned.pinned_items.is_empty());
 
         let _ = tokio::fs::remove_file(path).await;
+    }
+
+    #[test]
+    fn pin_row_allows_realistic_log_values() {
+        let row = serde_json::json!({
+            "url": "caching.graphql.imdb.com/?operationName=WinnersWidget&variables={\"enableOverride\":false,\"locale\":\"en-GB\"}",
+            "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "respcode": "403",
+            "reason": "Not allowed to browse this category"
+        })
+        .as_object()
+        .expect("object")
+        .clone();
+        validate_pin_row(&row).expect("pin row should validate");
+    }
+
+    #[test]
+    fn pin_row_rejects_nested_json_values() {
+        let row = serde_json::json!({
+            "time": "2026-04-06 10:15:00",
+            "payload": { "nested": "value" }
+        })
+        .as_object()
+        .expect("object")
+        .clone();
+        let err = validate_pin_row(&row).expect_err("nested values should fail");
+        assert!(err.to_string().contains("scalar"));
     }
 }
